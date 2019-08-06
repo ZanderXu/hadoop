@@ -566,6 +566,10 @@ public class Router extends CompositeService implements
   protected NamenodeHeartbeatService createNamenodeHeartbeatService(
       String nsId, String nnId) {
 
+    if (nnId == null) {
+      return null;
+    }
+
     LOG.info("Creating heartbeat service for Namenode {} in {}", nnId, nsId);
     NamenodeHeartbeatService ret = new NamenodeHeartbeatService(
         namenodeResolver, nsId, nnId);
