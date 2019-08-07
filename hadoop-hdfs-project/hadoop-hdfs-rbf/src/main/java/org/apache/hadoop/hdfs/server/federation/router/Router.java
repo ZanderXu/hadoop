@@ -550,7 +550,13 @@ public class Router extends CompositeService implements
       nnId = HAUtil.getNameNodeId(conf, nsId);
       if (nnId == null) {
         LOG.error("Cannot find namenode id for local {}", nsId);
+        return null;
       }
+    }
+
+    if (nsId == null) {
+      LOG.error("Cannot find one good ns id, local match or single.");
+      return null;
     }
 
     return createNamenodeHeartbeatService(nsId, nnId);

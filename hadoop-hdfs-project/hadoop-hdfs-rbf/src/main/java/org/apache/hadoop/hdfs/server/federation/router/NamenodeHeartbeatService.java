@@ -26,6 +26,7 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.util.Map;
 
+import com.google.common.annotations.VisibleForTesting;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.ha.HAServiceProtocol;
 import org.apache.hadoop.ha.HAServiceStatus;
@@ -108,6 +109,11 @@ public class NamenodeHeartbeatService extends PeriodicService {
     this.nameserviceId = nsId;
     this.namenodeId = nnId;
 
+  }
+
+  @VisibleForTesting
+  public String getServiceAddress() {
+    return serviceAddress;
   }
 
   @Override

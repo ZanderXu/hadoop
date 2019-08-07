@@ -288,4 +288,52 @@ public class TestRouter {
       router.close();
     }
   }
+
+  @Test
+  public void testCreateLocalNamenodeHeartbeatService() throws IOException {
+    Router router = new Router();
+    Configuration config = new HdfsConfiguration();
+    config.set("dfs.nameservices", "ns1,ns2");
+    config.set("dfs.ha.namenodes.ns1", "nn1,nn2");
+    config.set("dfs.namenode.rpc-address.ns1.nn1", "remote1:8020");
+    config.set("dfs.namenode.rpc-address.ns1.nn2", "remote2:8020");
+    config.set("dfs.namenode.servicerpc-address.ns1.nn1", "remote1:8022");
+    config.set("dfs.namenode.servicerpc-address.ns1.nn2", "remote2:8022");
+    config.set("dfs.namenode.http-address.ns1.nn1", "remote1:50070");
+    config.set("dfs.namenode.http-address.ns1.nn2", "remote2:50070");
+    config.set("dfs.ha.namenodes.ns2", "nn1,nn2");
+    config.set("dfs.namenode.rpc-address.ns2.nn1", "remote3:8020");
+    config.set("dfs.namenode.rpc-address.ns2.nn2", "remote4:8020");
+    config.set("dfs.namenode.servicerpc-address.ns2.nn1", "remote3:8022");
+    config.set("dfs.namenode.servicerpc-address.ns2.nn2", "remote4:8022");
+    config.set("dfs.namenode.http-address.ns2.nn1", "remote3:50070");
+    config.set("dfs.namenode.http-address.ns2.nn2", "remote4:50070");
+
+    config.set("dfs.federation.router.monitor.namenode", "ns1.nn1,ns1.nn2,ns2.nn1,ns2.nn2");
+    router.init(config);
+
+    Collection<NamenodeHeartbeatService> namenodeHeartbeatServices =
+        router.getNamenodeHeartbeatServices();
+
+    assertEquals(namenodeHeartbeatServices.size(), 4);
+
+    for (NamenodeHeartbeatService namenodeHeartbeatService : namenodeHeartbeatServices) {
+      namenodeHeartbeatService.init(config);
+      assertNotNull(namenodeHeartbeatService.getServiceAddress());
+    }
+    router.close();
+
+    config.set("dfs.nameservices", "ns1");
+    router = new Router();
+    router.init(config);
+    namenodeHeartbeatServices = router.getNamenodeHeartbeatServices();
+
+    assertEquals(namenodeHeartbeatServices.size(), 4);
+
+    for (NamenodeHeartbeatService namenodeHeartbeatService : namenodeHeartbeatServices) {
+      namenodeHeartbeatService.init(config);
+      assertNotNull(namenodeHeartbeatService.getServiceAddress());
+    }
+    router.close();
+  }
 }
