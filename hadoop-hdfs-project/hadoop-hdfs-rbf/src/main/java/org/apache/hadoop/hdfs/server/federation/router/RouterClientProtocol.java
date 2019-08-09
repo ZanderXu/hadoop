@@ -441,14 +441,19 @@ public class RouterClientProtocol implements ClientProtocol {
       throws IOException {
     rpcServer.checkOperation(NameNode.OperationCategory.WRITE);
 
-    final List<RemoteLocation> locations =
-        rpcServer.getLocationsForPath(src, true);
     RemoteMethod method = new RemoteMethod("addBlock",
         new Class<?>[] {String.class, String.class, ExtendedBlock.class,
             DatanodeInfo[].class, long.class, String[].class,
             EnumSet.class},
         new RemoteParam(), clientName, previous, excludedNodes, fileId,
         favoredNodes, addBlockFlags);
+
+    if (previous != null) {
+      return (LocatedBlock) rpcClient.invokeSingle(previous, method);
+    }
+
+    final List<RemoteLocation> locations =
+        rpcServer.getLocationsForPath(src, true);
     // TODO verify the excludedNodes and favoredNodes are acceptable to this NN
     return rpcClient.invokeSequential(
         locations, method, LocatedBlock.class, null);
@@ -466,14 +471,19 @@ public class RouterClientProtocol implements ClientProtocol {
       throws IOException {
     rpcServer.checkOperation(NameNode.OperationCategory.READ);
 
-    final List<RemoteLocation> locations =
-        rpcServer.getLocationsForPath(src, false);
     RemoteMethod method = new RemoteMethod("getAdditionalDatanode",
         new Class<?>[] {String.class, long.class, ExtendedBlock.class,
             DatanodeInfo[].class, String[].class,
             DatanodeInfo[].class, int.class, String.class},
         new RemoteParam(), fileId, blk, existings, existingStorageIDs, excludes,
         numAdditionalNodes, clientName);
+
+    if (blk != null) {
+      return (LocatedBlock) rpcClient.invokeSingle(blk, method);
+    }
+
+    final List<RemoteLocation> locations =
+        rpcServer.getLocationsForPath(src, false);
     return rpcClient.invokeSequential(
         locations, method, LocatedBlock.class, null);
   }
@@ -495,12 +505,17 @@ public class RouterClientProtocol implements ClientProtocol {
       long fileId) throws IOException {
     rpcServer.checkOperation(NameNode.OperationCategory.WRITE);
 
-    final List<RemoteLocation> locations =
-        rpcServer.getLocationsForPath(src, true);
     RemoteMethod method = new RemoteMethod("complete",
         new Class<?>[] {String.class, String.class, ExtendedBlock.class,
             long.class},
         new RemoteParam(), clientName, last, fileId);
+
+    if (last != null) {
+      return (Boolean) rpcClient.invokeSingle(last, method);
+    }
+
+    final List<RemoteLocation> locations =
+        rpcServer.getLocationsForPath(src, true);
     // Complete can return true/false, so don't expect a result
     return rpcClient.invokeSequential(locations, method, Boolean.class, null);
   }
