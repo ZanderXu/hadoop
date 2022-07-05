@@ -135,6 +135,22 @@
   </property>
 
   <property>
+    <name>dfs.federation.router.enable.multiple.socket</name>
+    <value>false</value>
+    <description>
+      If enable multiple downstream socket or not.
+    </description>
+  </property>
+
+  <property>
+    <name>dfs.federation.router.max.concurrency.per.connection</name>
+    <value>1</value>
+    <description>
+      The maximum number of requests that a connection can handle concurrently.
+    </description>
+  </property>
+
+  <property>
     <name>dfs.federation.router.connection.pool.clean.ms</name>
     <value>60000</value>
     <description>

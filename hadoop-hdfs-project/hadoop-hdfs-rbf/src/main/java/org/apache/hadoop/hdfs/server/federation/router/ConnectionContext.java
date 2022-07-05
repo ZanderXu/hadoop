@@ -53,9 +53,12 @@ public class ConnectionContext {
   private long lastActiveTs = 0;
   /** The connection's active status would expire after this window. */
   private final static long ACTIVE_WINDOW_TIME = TimeUnit.SECONDS.toMillis(30);
+  /** The maximum number of requests that this connection can handle concurrently. **/
+  private final int maxConcurrencyPerConn;
 
-  public ConnectionContext(ProxyAndInfo<?> connection) {
+  public ConnectionContext(ProxyAndInfo<?> connection, int maxConcurrencyPerConn) {
     this.client = connection;
+    this.maxConcurrencyPerConn = maxConcurrencyPerConn;
   }
 
   /**
@@ -93,6 +96,23 @@ public class ConnectionContext {
    * @return True if the connection can be used.
    */
   public synchronized boolean isUsable() {
+    return hasAvailableConcurrency() && !isClosed();
+  }
+
+  /**
+   * Return true if this connection context still has available concurrency,
+   * else return false.
+   */
+  private synchronized boolean hasAvailableConcurrency() {
+    return this.numThreads < maxConcurrencyPerConn;
+  }
+
+  /**
+   *  Check if the connection is idle. It checks if the connection is not used
+   *  by another thread.
+   * @return True if the connection is not used by another thread.
+   */
+  public synchronized boolean isIdle() {
     return !isActive() && !isClosed();
   }
 
