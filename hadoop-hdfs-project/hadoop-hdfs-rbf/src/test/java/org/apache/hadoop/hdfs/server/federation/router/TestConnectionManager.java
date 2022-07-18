@@ -343,7 +343,7 @@ public class TestConnectionManager {
     addConnectionsToPool(pool, totalConns - 1, activeConns - 1);
 
     // There are activeConn connections.
-    // We can clean up the pool
+    // We can cleanup the pool
     tmpConnManager.cleanup(pool);
     assertEquals(leftConns, pool.getNumConnections());
 
@@ -356,6 +356,6 @@ public class TestConnectionManager {
         "Unsupported protocol for connection to NameNode: "
             + TestConnectionManager.class.getName(),
         () -> ConnectionPool.newConnection(conf, TEST_NN_ADDRESS, TEST_USER1,
-            TestConnectionManager.class, false, 0, 1));
+            TestConnectionManager.class, false, 0));
   }
 }

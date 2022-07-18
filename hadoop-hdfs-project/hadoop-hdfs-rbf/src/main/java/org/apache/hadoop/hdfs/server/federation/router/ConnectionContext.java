@@ -20,6 +20,7 @@ package org.apache.hadoop.hdfs.server.federation.router;
 import java.net.InetSocketAddress;
 import java.util.concurrent.TimeUnit;
 
+import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.NameNodeProxiesClient.ProxyAndInfo;
 import org.apache.hadoop.ipc.RPC;
 import org.apache.hadoop.util.Time;
@@ -56,9 +57,11 @@ public class ConnectionContext {
   /** The maximum number of requests that this connection can handle concurrently. **/
   private final int maxConcurrencyPerConn;
 
-  public ConnectionContext(ProxyAndInfo<?> connection, int maxConcurrencyPerConn) {
+  public ConnectionContext(ProxyAndInfo<?> connection, Configuration conf) {
     this.client = connection;
-    this.maxConcurrencyPerConn = maxConcurrencyPerConn;
+    this.maxConcurrencyPerConn = conf.getInt(
+        RBFConfigKeys.DFS_ROUTER_MAX_CONCURRENCY_PER_CONNECTION_KEY,
+        RBFConfigKeys.DFS_ROUTER_MAX_CONCURRENCY_PER_CONNECTION_DEFAULT);
   }
 
   /**

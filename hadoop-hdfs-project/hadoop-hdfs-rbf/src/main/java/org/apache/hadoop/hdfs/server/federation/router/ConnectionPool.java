@@ -109,9 +109,6 @@ public class ConnectionPool {
   /** Enable using multiple physical socket or not. **/
   private final boolean enableMultiSocket;
 
-  /** Max Concurrency of each connection. */
-  private final int maxConcurrencyPerConn;
-
   /** Map for the protocols and their protobuf implementations. */
   private final static Map<Class<?>, ProtoImpl> PROTO_MAP = new HashMap<>();
   static {
@@ -159,9 +156,6 @@ public class ConnectionPool {
     this.enableMultiSocket = conf.getBoolean(
         RBFConfigKeys.DFS_ROUTER_NAMENODE_ENABLE_MULTIPLE_SOCKET_KEY,
         RBFConfigKeys.DFS_ROUTER_NAMENODE_ENABLE_MULTIPLE_SOCKET_DEFAULT);
-    this.maxConcurrencyPerConn = conf.getInt(
-        RBFConfigKeys.DFS_ROUTER_MAX_CONCURRENCY_PER_CONNECTION_KEY,
-        RBFConfigKeys.DFS_ROUTER_MAX_CONCURRENCY_PER_CONNECTION_DEFAULT);
 
     // Add minimum connections to the pool
     for (int i = 0; i < this.minSize; i++) {
@@ -403,8 +397,7 @@ public class ConnectionPool {
   public ConnectionContext newConnection() throws IOException {
     return newConnection(this.conf, this.namenodeAddress,
         this.ugi, this.protocol, this.enableMultiSocket,
-        this.socketIndex.incrementAndGet(),
-        this.maxConcurrencyPerConn);
+        this.socketIndex.incrementAndGet());
   }
 
   /**
@@ -419,16 +412,13 @@ public class ConnectionPool {
    * @param ugi User context.
    * @param proto Interface of the protocol.
    * @param enableMultiSocket Enable multiple socket or not.
-   * @param maxConcurrencyPerConn The maximum number of requests that
-   *                              this connection can handle concurrently.
    * @return proto for the target ClientProtocol that contains the user's
    *         security context.
    * @throws IOException If it cannot be created.
    */
   protected static <T> ConnectionContext newConnection(Configuration conf,
       String nnAddress, UserGroupInformation ugi, Class<T> proto,
-      boolean enableMultiSocket, int socketIndex,
-      int maxConcurrencyPerConn) throws IOException {
+      boolean enableMultiSocket, int socketIndex) throws IOException {
     if (!PROTO_MAP.containsKey(proto)) {
       String msg = "Unsupported protocol for connection to NameNode: "
           + ((proto != null) ? proto.getName() : "null");
@@ -467,7 +457,7 @@ public class ConnectionPool {
     Text dtService = SecurityUtil.buildTokenService(socket);
 
     ProxyAndInfo<T> clientProxy = new ProxyAndInfo<T>(client, dtService, socket);
-    return new ConnectionContext(clientProxy, maxConcurrencyPerConn);
+    return new ConnectionContext(clientProxy, conf);
   }
 
   private static <T> T newProtoClient(Class<T> proto, ProtoImpl classes,
