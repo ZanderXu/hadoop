@@ -29,6 +29,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.ha.HAServiceProtocol;
+import org.apache.hadoop.hdfs.protocol.ClientMsyncProtocol;
+import org.apache.hadoop.hdfs.protocolPB.ClientNamenodeMsyncProtocolPB;
+import org.apache.hadoop.hdfs.protocolPB.ClientNamenodeMsyncProtocolTranslatorPB;
 import org.apache.hadoop.hdfs.server.namenode.ha.ClientHAProxyFactory;
 import org.apache.hadoop.hdfs.server.namenode.ha.HAProxyFactory;
 import org.apache.hadoop.ipc.AlignmentContext;
@@ -77,6 +80,28 @@ public class NameNodeProxiesClient {
 
   private static final Logger LOG = LoggerFactory.getLogger(
       NameNodeProxiesClient.class);
+
+  /** Map for the protocols and their protobuf implementations. */
+  private final static Map<Class<?>, ProtoImpl> PROTO_MAP = new HashMap<>();
+  static {
+    PROTO_MAP.put(ClientProtocol.class,
+        new ProtoImpl(ClientNamenodeProtocolPB.class,
+            ClientNamenodeProtocolTranslatorPB.class));
+    PROTO_MAP.put(ClientMsyncProtocol.class,
+        new ProtoImpl(ClientNamenodeMsyncProtocolPB.class,
+            ClientNamenodeMsyncProtocolTranslatorPB.class));
+  }
+
+  /** Class to store the protocol implementation. */
+  private static class ProtoImpl {
+    private final Class<?> protoPb;
+    private final Class<?> protoClientPb;
+
+    ProtoImpl(Class<?> pPb, Class<?> pClientPb) {
+      this.protoPb = pPb;
+      this.protoClientPb = pClientPb;
+    }
+  }
 
   /**
    * Wrapper for a client proxy as well as its associated service ID.
@@ -340,18 +365,22 @@ public class NameNodeProxiesClient {
       InetSocketAddress address, Configuration conf, UserGroupInformation ugi,
       boolean withRetries, AtomicBoolean fallbackToSimpleAuth)
       throws IOException {
-    return createProxyWithAlignmentContext(address, conf, ugi, withRetries,
-        fallbackToSimpleAuth, null);
+    return createProxyWithAlignmentContext(address, conf, ugi, ClientProtocol.class,
+        withRetries, fallbackToSimpleAuth, null);
   }
 
-  public static ClientProtocol createProxyWithAlignmentContext(
+  public static <T> T createProxyWithAlignmentContext(
       InetSocketAddress address, Configuration conf, UserGroupInformation ugi,
-      boolean withRetries, AtomicBoolean fallbackToSimpleAuth,
-      AlignmentContext alignmentContext)
-      throws IOException {
-    RPC.setProtocolEngine(conf, ClientNamenodeProtocolPB.class,
-        ProtobufRpcEngine2.class);
-
+      Class<T> proto, boolean withRetries, AtomicBoolean fallbackToSimpleAuth,
+      AlignmentContext alignmentContext) throws IOException {
+    if (!PROTO_MAP.containsKey(proto)) {
+      String msg = "Unsupported protocol for connection to NameNode: "
+          + ((proto != null) ? proto.getName() : "null");
+      LOG.error(msg);
+      throw new IllegalStateException(msg);
+    }
+    ProtoImpl classes = PROTO_MAP.get(proto);
+    RPC.setProtocolEngine(conf, classes.protoPb, ProtobufRpcEngine2.class);
     final RetryPolicy defaultPolicy =
         RetryUtils.getDefaultRetryPolicy(
             conf,
@@ -360,27 +389,40 @@ public class NameNodeProxiesClient {
             HdfsClientConfigKeys.Retry.POLICY_SPEC_KEY,
             HdfsClientConfigKeys.Retry.POLICY_SPEC_DEFAULT,
             SafeModeException.class.getName());
-
-    final long version = RPC.getProtocolVersion(ClientNamenodeProtocolPB.class);
-    ClientNamenodeProtocolPB proxy = RPC.getProtocolProxy(
-        ClientNamenodeProtocolPB.class, version, address, ugi, conf,
+    final long version = RPC.getProtocolVersion(classes.protoPb);
+    Object proxy = RPC.getProtocolProxy(
+        classes.protoPb, version, address, ugi, conf,
         NetUtils.getDefaultSocketFactory(conf),
-        org.apache.hadoop.ipc.Client.getTimeout(conf), defaultPolicy,
+        org.apache.hadoop.ipc.Client.getRpcTimeout(conf), defaultPolicy,
         fallbackToSimpleAuth, alignmentContext).getProxy();
 
     if (withRetries) { // create the proxy with retries
       Map<String, RetryPolicy> methodNameToPolicyMap = new HashMap<>();
-      ClientProtocol translatorProxy =
-          new ClientNamenodeProtocolTranslatorPB(proxy);
-      return (ClientProtocol) RetryProxy.create(
-          ClientProtocol.class,
-          new DefaultFailoverProxyProvider<>(ClientProtocol.class,
-              translatorProxy),
+      T client = newProtoClient(proto, classes, proxy);
+      @SuppressWarnings("unchecked")
+      T result = (T) RetryProxy.create(proto,
+          new DefaultFailoverProxyProvider<T>(proto, client),
           methodNameToPolicyMap,
           defaultPolicy);
+      return result;
     } else {
-      return new ClientNamenodeProtocolTranslatorPB(proxy);
+      return newProtoClient(proto, classes, proxy);
     }
+  }
+
+  private static <T> T newProtoClient(Class<T> proto, ProtoImpl classes, Object proxy) {
+    try {
+      Constructor<?> constructor = classes.protoClientPb.getConstructor(classes.protoPb);
+      Object o = constructor.newInstance(proxy);
+      if (proto.isAssignableFrom(o.getClass())) {
+        @SuppressWarnings("unchecked")
+        T client = (T) o;
+        return client;
+      }
+    } catch (Exception e) {
+      LOG.error(e.getMessage());
+    }
+    return null;
   }
 
 }

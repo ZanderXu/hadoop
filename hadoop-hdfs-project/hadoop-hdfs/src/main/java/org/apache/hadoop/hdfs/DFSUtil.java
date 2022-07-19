@@ -760,6 +760,28 @@ public class DFSUtil {
   }
 
   /**
+   * Map a logical namenode ID to its msync address.  Use the given
+   * nameservice if specified, or the configured one if none is given.
+   *
+   * @param conf Configuration
+   * @param nsId which nameservice nnId is a part of, optional
+   * @param nnId the namenode ID to get the service addr for
+   * @return the msync addr, null if it could not be determined
+   */
+  public static String getNamenodeMsyncAddr(
+      final Configuration conf, String nsId, String nnId) {
+
+    if (nsId == null) {
+      nsId = getOnlyNameServiceIdOrNull(conf);
+    }
+
+    String msyncAddrKey = DFSUtilClient.concatSuffixes(
+        DFSConfigKeys.DFS_NAMENODE_MSYNC_RPC_ADDRESS_KEY, nsId, nnId);
+
+    return conf.get(msyncAddrKey);
+  }
+
+  /**
    * Flatten the given map, as returned by other functions in this class,
    * into a flat list of {@link ConfiguredNNAddress} instances.
    */

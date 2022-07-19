@@ -22,6 +22,7 @@ import org.apache.hadoop.fs.CommonConfigurationKeys;
 import org.apache.hadoop.ha.HAServiceProtocol;
 import org.apache.hadoop.ha.ZKFCProtocol;
 import org.apache.hadoop.hdfs.protocol.ClientDatanodeProtocol;
+import org.apache.hadoop.hdfs.protocol.ClientMsyncProtocol;
 import org.apache.hadoop.hdfs.protocol.ClientProtocol;
 import org.apache.hadoop.hdfs.protocol.ReconfigurationProtocol;
 import org.apache.hadoop.hdfs.qjournal.protocol.InterQJournalProtocol;
@@ -82,6 +83,9 @@ public class HDFSPolicyProvider extends PolicyProvider {
     new Service(
         CommonConfigurationKeys.HADOOP_SECURITY_SERVICE_AUTHORIZATION_DATANODE_LIFELINE,
         DatanodeLifelineProtocol.class),
+    new Service(
+        CommonConfigurationKeys.HADOOP_SECURITY_SERVICE_AUTHORIZATION_CLIENT_MSYNC,
+        ClientMsyncProtocol.class),
     new Service(
           CommonConfigurationKeys.HADOOP_SECURITY_SERVICE_AUTHORIZATION_RECONFIGURATION,
           ReconfigurationProtocol.class)

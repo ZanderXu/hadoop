@@ -19,6 +19,7 @@ package org.apache.hadoop.hdfs.server.namenode.ha;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.NameNodeProxiesClient;
+import org.apache.hadoop.hdfs.protocol.ClientProtocol;
 import org.apache.hadoop.ipc.AlignmentContext;
 import org.apache.hadoop.security.UserGroupInformation;
 
@@ -41,7 +42,7 @@ public class ClientHAProxyFactory<T> implements HAProxyFactory<T> {
       AtomicBoolean fallbackToSimpleAuth) throws IOException {
     if (alignmentContext != null) {
       return (T) NameNodeProxiesClient.createProxyWithAlignmentContext(
-        nnAddr, conf, ugi, false, fallbackToSimpleAuth, alignmentContext);
+          nnAddr, conf, ugi, xface, false, fallbackToSimpleAuth, alignmentContext);
     }
     return (T) NameNodeProxiesClient.createNonHAProxyWithClientProtocol(
       nnAddr, conf, ugi, false, fallbackToSimpleAuth);

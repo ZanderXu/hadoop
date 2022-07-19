@@ -216,6 +216,8 @@ public class CommonConfigurationKeys extends CommonConfigurationKeysPublic {
   public static final String
       HADOOP_SECURITY_SERVICE_AUTHORIZATION_DATANODE_LIFELINE =
           "security.datanode.lifeline.protocol.acl";
+  public static final String HADOOP_SECURITY_SERVICE_AUTHORIZATION_CLIENT_MSYNC =
+      "security.client.msync.protocol.acl";
   public static final String
       HADOOP_SECURITY_SERVICE_AUTHORIZATION_RECONFIGURATION =
       "security.reconfiguration.protocol.acl";

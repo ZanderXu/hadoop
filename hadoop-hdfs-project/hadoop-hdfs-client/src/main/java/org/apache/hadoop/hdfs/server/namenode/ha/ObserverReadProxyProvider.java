@@ -33,6 +33,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.ha.HAServiceProtocol.HAServiceState;
 import org.apache.hadoop.hdfs.ClientGSIContext;
 import org.apache.hadoop.hdfs.client.HdfsClientConfigKeys;
+import org.apache.hadoop.hdfs.protocol.ClientMsyncProtocol;
 import org.apache.hadoop.hdfs.protocol.ClientProtocol;
 import org.apache.hadoop.io.retry.AtMostOnce;
 import org.apache.hadoop.io.retry.Idempotent;
@@ -51,6 +52,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.hadoop.classification.VisibleForTesting;
+
+import static org.apache.hadoop.hdfs.client.HdfsClientConfigKeys.DFS_NAMENODE_MSYNC_RPC_ADDRESS_KEY;
 
 /**
  * A {@link org.apache.hadoop.io.retry.FailoverProxyProvider} implementation
@@ -90,6 +93,7 @@ public class ObserverReadProxyProvider<T>
 
   /** The inner proxy provider used for active/standby failover. */
   private final AbstractNNFailoverProxyProvider<T> failoverProxy;
+  private final AbstractNNFailoverProxyProvider<ClientMsyncProtocol> msyncFailoverProxy;
   /** List of all NameNode proxies. */
   private final List<NNProxyInfo<T>> nameNodeProxies;
 
@@ -153,7 +157,7 @@ public class ObserverReadProxyProvider<T>
    * inefficient.
    * The following value specify the period on how often to retry all Standby.
    */
-  private long observerProbeRetryPeriodMs;
+  private final long observerProbeRetryPeriodMs;
 
   /**
    * The previous time where zero observer were found. If there was observer,
@@ -175,8 +179,19 @@ public class ObserverReadProxyProvider<T>
   public ObserverReadProxyProvider(
       Configuration conf, URI uri, Class<T> xface, HAProxyFactory<T> factory,
       AbstractNNFailoverProxyProvider<T> failoverProxy) {
+
     super(conf, uri, xface, factory);
     this.failoverProxy = failoverProxy;
+    AbstractNNFailoverProxyProvider<ClientMsyncProtocol> tmpMsyncFailoverProxy;
+    try {
+      tmpMsyncFailoverProxy = new ConfiguredFailoverProxyProvider<>(
+          conf, uri, ClientMsyncProtocol.class, new ClientHAProxyFactory<>(),
+          DFS_NAMENODE_MSYNC_RPC_ADDRESS_KEY);
+    } catch (Throwable e) {
+      tmpMsyncFailoverProxy = null;
+    }
+
+    this.msyncFailoverProxy = tmpMsyncFailoverProxy;
     this.alignmentContext = new ClientGSIContext();
     factory.setAlignmentContext(alignmentContext);
     this.lastObserverProbeTime = 0;
@@ -342,9 +357,27 @@ public class ObserverReadProxyProvider<T>
     if (msynced) {
       return; // No need for an msync
     }
-    getProxyAsClientProtocol(failoverProxy.getProxy().proxy).msync();
+    msync();
     msynced = true;
     lastMsyncTimeMs = Time.monotonicNow();
+  }
+
+  private synchronized void msync() throws IOException {
+    boolean msynced = false;
+    if (msyncFailoverProxy != null) {
+      try {
+        msyncFailoverProxy.getProxy().proxy.msync();
+        msynced = true;
+      } catch (IOException e) {
+        if (e instanceof StandbyException) {
+          msyncFailoverProxy.performFailover(msyncFailoverProxy.getProxy().proxy);
+        }
+      }
+    }
+
+    if (!msynced) {
+      getProxyAsClientProtocol(failoverProxy.getProxy().proxy).msync();
+    }
   }
 
   /**
@@ -379,7 +412,7 @@ public class ObserverReadProxyProvider<T>
   private void autoMsyncIfNecessary() throws IOException {
     if (autoMsyncPeriodMs == 0) {
       // Always msync
-      getProxyAsClientProtocol(failoverProxy.getProxy().proxy).msync();
+      msync();
     } else if (autoMsyncPeriodMs > 0) {
       if (Time.monotonicNow() - lastMsyncTimeMs > autoMsyncPeriodMs) {
         synchronized (this) {
@@ -388,7 +421,7 @@ public class ObserverReadProxyProvider<T>
           // Re-check the entry criterion since the status may have changed
           // while waiting for the lock.
           if (Time.monotonicNow() - lastMsyncTimeMs > autoMsyncPeriodMs) {
-            getProxyAsClientProtocol(failoverProxy.getProxy().proxy).msync();
+            msync();
             lastMsyncTimeMs = Time.monotonicNow();
           }
         }

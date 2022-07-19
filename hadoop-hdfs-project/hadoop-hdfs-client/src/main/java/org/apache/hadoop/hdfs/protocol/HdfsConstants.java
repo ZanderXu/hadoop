@@ -146,6 +146,13 @@ public final class HdfsConstants {
    */
   public static final String CLIENT_NAMENODE_PROTOCOL_NAME =
       "org.apache.hadoop.hdfs.protocol.ClientProtocol";
+
+  /**
+   * HDFS Msync Protocol Names:
+   */
+  public static final String CLIENT_NAMENODE_MSYNC_PROTOCOL_NAME =
+      "org.apache.hadoop.hdfs.protocol.ClientMsyncProtocol";
+
   /**
    * Router admin Protocol Names.
    */

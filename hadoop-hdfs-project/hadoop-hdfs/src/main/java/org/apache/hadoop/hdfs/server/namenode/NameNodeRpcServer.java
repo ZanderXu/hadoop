@@ -25,6 +25,9 @@ import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_IP_PROXY_USERS;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_LIFELINE_HANDLER_COUNT_KEY;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_LIFELINE_HANDLER_RATIO_DEFAULT;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_LIFELINE_HANDLER_RATIO_KEY;
+import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_MSYNC_HANDLER_COUNT_KEY;
+import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_MSYNC_HANDLER_RATIO_DEFAULT;
+import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_MSYNC_HANDLER_RATIO_KEY;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_SERVICE_HANDLER_COUNT_DEFAULT;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_SERVICE_HANDLER_COUNT_KEY;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_RPC_ADDRESS_AUXILIARY_KEY;
@@ -139,10 +142,13 @@ import org.apache.hadoop.hdfs.protocol.SnapshotStatus;
 import org.apache.hadoop.hdfs.protocol.UnregisteredNodeException;
 import org.apache.hadoop.hdfs.protocol.UnresolvedPathException;
 import org.apache.hadoop.hdfs.protocol.proto.ClientNamenodeProtocolProtos.ClientNamenodeProtocol;
+import org.apache.hadoop.hdfs.protocol.proto.ClientNamenodeMsyncProtocolProtos.ClientNamenodeMsyncProtocol;
 import org.apache.hadoop.hdfs.protocol.proto.DatanodeLifelineProtocolProtos.DatanodeLifelineProtocolService;
 import org.apache.hadoop.hdfs.protocol.proto.DatanodeProtocolProtos.DatanodeProtocolService;
 import org.apache.hadoop.hdfs.protocol.proto.NamenodeProtocolProtos.NamenodeProtocolService;
 import org.apache.hadoop.hdfs.protocol.proto.ReconfigurationProtocolProtos.ReconfigurationProtocolService;
+import org.apache.hadoop.hdfs.protocolPB.ClientNamenodeMsyncProtocolPB;
+import org.apache.hadoop.hdfs.protocolPB.ClientNamenodeMsyncProtocolServerSideTranslatorPB;
 import org.apache.hadoop.hdfs.protocolPB.ClientNamenodeProtocolPB;
 import org.apache.hadoop.hdfs.protocolPB.ClientNamenodeProtocolServerSideTranslatorPB;
 import org.apache.hadoop.hdfs.protocolPB.DatanodeLifelineProtocolPB;
@@ -262,6 +268,10 @@ public class NameNodeRpcServer implements NamenodeProtocols {
   /** The RPC server that listens to lifeline requests */
   private final RPC.Server lifelineRpcServer;
   private final InetSocketAddress lifelineRPCAddress;
+
+  /** The RPC server that listens to msync requests */
+  private final RPC.Server msyncRpcServer;
+  private final InetSocketAddress msyncRPCAddress;
   
   /** The RPC server that listens to requests from clients */
   protected final RPC.Server clientRpcServer;
@@ -341,6 +351,11 @@ public class NameNodeRpcServer implements NamenodeProtocols {
         new HAServiceProtocolServerSideTranslatorPB(this);
     BlockingService haPbService = HAServiceProtocolService
         .newReflectiveBlockingService(haServiceProtocolXlator);
+
+    ClientNamenodeMsyncProtocolServerSideTranslatorPB msyncProtocolXlator =
+        new ClientNamenodeMsyncProtocolServerSideTranslatorPB(this);
+    BlockingService msyncPbService = ClientNamenodeMsyncProtocol
+        .newReflectiveBlockingService(msyncProtocolXlator);
 
     ReconfigurationProtocolServerSideTranslatorPB reconfigurationProtocolXlator
         = new ReconfigurationProtocolServerSideTranslatorPB(this);
@@ -444,13 +459,6 @@ public class NameNodeRpcServer implements NamenodeProtocols {
       lifelineRPCAddress = null;
     }
 
-    InetSocketAddress rpcAddr = nn.getRpcServerAddress(conf);
-    String bindHost = nn.getRpcServerBindHost(conf);
-    if (bindHost == null) {
-      bindHost = rpcAddr.getHostName();
-    }
-    LOG.info("RPC server is binding to " + bindHost + ":" + rpcAddr.getPort());
-
     boolean enableStateContext = conf.getBoolean(
         DFS_NAMENODE_STATE_CONTEXT_ENABLED_KEY,
         DFS_NAMENODE_STATE_CONTEXT_ENABLED_DEFAULT);
@@ -460,6 +468,54 @@ public class NameNodeRpcServer implements NamenodeProtocols {
     if (enableStateContext) {
       stateIdContext = new GlobalStateIdContext(namesystem);
     }
+
+    InetSocketAddress msyncRpcAddr = nn.getMsyncRpcServerAddress(conf);
+    if (msyncRpcAddr != null) {
+      RPC.setProtocolEngine(conf, ClientNamenodeMsyncProtocolPB.class,
+          ProtobufRpcEngine2.class);
+      String bindHost = nn.getMsyncRpcServerBindHost(conf);
+      if (bindHost == null) {
+        bindHost = msyncRpcAddr.getHostName();
+      }
+      LOG.info("MSync RPC server is binding to {}:{}", bindHost,
+          msyncRpcAddr.getPort());
+
+      int msyncHandlerCount = conf.getInt(
+          DFS_NAMENODE_MSYNC_HANDLER_COUNT_KEY, 0);
+      if (msyncHandlerCount <= 0) {
+        float msyncHandlerRatio = conf.getFloat(
+            DFS_NAMENODE_MSYNC_HANDLER_RATIO_KEY,
+            DFS_NAMENODE_MSYNC_HANDLER_RATIO_DEFAULT);
+        msyncHandlerCount = Math.max(
+            (int)(handlerCount * msyncHandlerRatio), 1);
+      }
+      msyncRpcServer = new RPC.Builder(conf)
+          .setProtocol(ClientNamenodeMsyncProtocolPB.class)
+          .setInstance(msyncPbService)
+          .setBindAddress(bindHost)
+          .setPort(msyncRpcAddr.getPort())
+          .setNumHandlers(msyncHandlerCount)
+          .setVerbose(false)
+          .setSecretManager(namesystem.getDelegationTokenSecretManager())
+          .setAlignmentContext(stateIdContext)
+          .build();
+
+      // Update the address with the correct port
+      InetSocketAddress listenAddr = msyncRpcServer.getListenerAddress();
+      msyncRPCAddress = new InetSocketAddress(msyncRpcAddr.getHostName(),
+          listenAddr.getPort());
+      nn.setRpcMsyncServerAddress(conf, msyncRPCAddress);
+    } else {
+      msyncRpcServer = null;
+      msyncRPCAddress = null;
+    }
+
+    InetSocketAddress rpcAddr = nn.getRpcServerAddress(conf);
+    String bindHost = nn.getRpcServerBindHost(conf);
+    if (bindHost == null) {
+      bindHost = rpcAddr.getHostName();
+    }
+    LOG.info("RPC server is binding to " + bindHost + ":" + rpcAddr.getPort());
 
     clientRpcServer = new RPC.Builder(conf)
         .setProtocol(
@@ -503,6 +559,9 @@ public class NameNodeRpcServer implements NamenodeProtocols {
       }
       if (lifelineRpcServer != null) {
         lifelineRpcServer.refreshServiceAcl(conf, new HDFSPolicyProvider());
+      }
+      if (msyncRpcServer != null) {
+        msyncRpcServer.refreshServiceAcl(conf, new HDFSPolicyProvider());
       }
     }
 
@@ -553,6 +612,9 @@ public class NameNodeRpcServer implements NamenodeProtocols {
     if (lifelineRpcServer != null) {
       lifelineRpcServer.setTracer(nn.tracer);
     }
+    if (msyncRpcServer != null) {
+      msyncRpcServer.setTracer(nn.tracer);
+    }
     int[] auxiliaryPorts =
         conf.getInts(DFS_NAMENODE_RPC_ADDRESS_AUXILIARY_KEY);
     if (auxiliaryPorts != null && auxiliaryPorts.length != 0) {
@@ -566,6 +628,12 @@ public class NameNodeRpcServer implements NamenodeProtocols {
   @VisibleForTesting
   RPC.Server getLifelineRpcServer() {
     return lifelineRpcServer;
+  }
+
+  /** Allow access to the msync RPC server for testing */
+  @VisibleForTesting
+  public RPC.Server getMsyncRpcServer() {
+    return msyncRpcServer;
   }
 
   /** Allow access to the client RPC server for testing */
@@ -591,6 +659,9 @@ public class NameNodeRpcServer implements NamenodeProtocols {
     if (lifelineRpcServer != null) {
       lifelineRpcServer.start();
     }
+    if (msyncRpcServer != null) {
+      msyncRpcServer.start();
+    }
   }
   
   /**
@@ -603,6 +674,9 @@ public class NameNodeRpcServer implements NamenodeProtocols {
     }
     if (lifelineRpcServer != null) {
       lifelineRpcServer.join();
+    }
+    if (msyncRpcServer != null) {
+      msyncRpcServer.join();
     }
   }
 
@@ -619,10 +693,17 @@ public class NameNodeRpcServer implements NamenodeProtocols {
     if (lifelineRpcServer != null) {
       lifelineRpcServer.stop();
     }
+    if (msyncRpcServer != null) {
+      msyncRpcServer.stop();
+    }
   }
 
   InetSocketAddress getLifelineRpcAddress() {
     return lifelineRPCAddress;
+  }
+
+  InetSocketAddress getMsyncRPCAddress() {
+    return msyncRPCAddress;
   }
 
   InetSocketAddress getServiceRpcAddress() {
@@ -1441,7 +1522,7 @@ public class NameNodeRpcServer implements NamenodeProtocols {
     return namesystem.listOpenFiles(prevId, openFilesTypes, path);
   }
 
-  @Override // ClientProtocol
+  @Override // ClientProtocol, ClientMSyncProtocol
   public void msync() throws IOException {
     // Check for write access to ensure that msync only happens on active
     namesystem.checkOperation(OperationCategory.WRITE);

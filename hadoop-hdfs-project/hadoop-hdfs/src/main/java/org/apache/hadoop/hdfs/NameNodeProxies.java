@@ -177,7 +177,7 @@ public class NameNodeProxies {
     T proxy;
     if (xface == ClientProtocol.class) {
       proxy = (T) NameNodeProxiesClient.createProxyWithAlignmentContext(
-          nnAddr, conf, ugi, withRetries, fallbackToSimpleAuth,
+          nnAddr, conf, ugi, xface, withRetries, fallbackToSimpleAuth,
           alignmentContext);
     } else if (xface == JournalProtocol.class) {
       proxy = (T) createNNProxyWithJournalProtocol(nnAddr, conf, ugi,
@@ -296,7 +296,8 @@ public class NameNodeProxies {
         address, conf, ugi, withRetries, alignmentContext);
     ClientProtocol clientProtocol =
         NameNodeProxiesClient.createProxyWithAlignmentContext(address,
-            conf, ugi, withRetries, fallbackToSimpleAuth, alignmentContext);
+            conf, ugi, ClientProtocol.class, withRetries, fallbackToSimpleAuth,
+            alignmentContext);
 
     return ProxyCombiner.combine(BalancerProtocols.class,
         namenodeProtocol, clientProtocol);
