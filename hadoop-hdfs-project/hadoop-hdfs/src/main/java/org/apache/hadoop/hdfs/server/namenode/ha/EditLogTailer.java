@@ -344,6 +344,7 @@ public class EditLogTailer {
       Collection<EditLogInputStream> streams;
       long startTime = timer.monotonicNow();
       try {
+        LOG.info("9999999 fromTxId={}.", lastTxnId + 1);
         streams = editLog.selectInputStreams(lastTxnId + 1, 0,
             null, inProgressOk, true);
       } catch (IOException ioe) {

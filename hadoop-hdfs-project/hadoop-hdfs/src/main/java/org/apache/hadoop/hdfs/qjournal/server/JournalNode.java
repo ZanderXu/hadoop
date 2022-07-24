@@ -252,6 +252,16 @@ public class JournalNode implements Tool, Configurable, JournalNodeMXBean {
     }
   }
 
+  @VisibleForTesting
+  public void mockRPCServer(JournalNodeRpcServer jnServer) {
+    if (rpcServer != null) {
+      rpcServer.stop();
+    }
+
+    rpcServer = jnServer;
+    rpcServer.start();
+  }
+
   public boolean isStarted() {
     return rpcServer != null;
   }

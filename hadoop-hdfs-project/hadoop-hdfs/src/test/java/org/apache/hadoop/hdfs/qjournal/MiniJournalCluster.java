@@ -31,7 +31,9 @@ import java.util.concurrent.TimeoutException;
 
 import java.util.function.Supplier;
 
+import org.apache.hadoop.hdfs.qjournal.server.JournalNodeRpcServer;
 import org.apache.hadoop.util.Lists;
+import org.mockito.Mockito;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.conf.Configuration;
@@ -56,6 +58,7 @@ public final class MiniJournalCluster implements Closeable {
     private final Configuration conf;
     private int[] httpPorts = null;
     private int[] rpcPorts = null;
+    private boolean mockJN = false;
 
     static {
       DefaultMetricsSystem.setMiniClusterMode(true);
@@ -87,6 +90,11 @@ public final class MiniJournalCluster implements Closeable {
 
     public Builder setRpcPorts(int... ports) {
       this.rpcPorts = ports;
+      return this;
+    }
+
+    public Builder setMockJN(boolean mockJN) {
+      this.mockJN = mockJN;
       return this;
     }
 
@@ -146,6 +154,10 @@ public final class MiniJournalCluster implements Closeable {
       JournalNode jn = new JournalNode();
       jn.setConf(createConfForNode(b, i));
       jn.start();
+      if (b.mockJN) {
+        jn.mockRPCServer(
+            Mockito.spy(new JournalNodeRpcServer(jn.getConf(), jn)));
+      }
       nodes[i] = new JNInfo(jn);
     }
   }

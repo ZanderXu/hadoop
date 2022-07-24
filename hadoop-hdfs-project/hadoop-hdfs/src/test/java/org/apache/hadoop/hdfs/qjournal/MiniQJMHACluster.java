@@ -52,6 +52,7 @@ public class MiniQJMHACluster {
     private final MiniDFSCluster.Builder dfsBuilder;
     private boolean forceRemoteEditsOnly = false;
     private String baseDir;
+    private boolean mockJN = false;
 
     public Builder(Configuration conf) {
       this.conf = conf;
@@ -86,6 +87,11 @@ public class MiniQJMHACluster {
       this.forceRemoteEditsOnly = val;
       return this;
     }
+
+    public Builder setMockJN(boolean mockJN) {
+      this.mockJN = mockJN;
+      return this;
+    }
   }
 
   public static MiniDFSNNTopology createDefaultTopology(int nns, int startingPort) {
@@ -113,7 +119,7 @@ public class MiniQJMHACluster {
         LOG.info("Set MiniQJMHACluster basePort to " + basePort);
         // start 3 journal nodes
         journalCluster = new MiniJournalCluster.Builder(conf)
-            .baseDir(builder.baseDir).format(true).build();
+            .baseDir(builder.baseDir).format(true).setMockJN(builder.mockJN).build();
         journalCluster.waitActive();
         journalCluster.setNamenodeSharedEditsConf(NAMESERVICE);
         URI journalURI = journalCluster.getQuorumJournalURI(NAMESERVICE);

@@ -35,7 +35,12 @@ import org.apache.hadoop.hdfs.DFSConfigKeys;
 import org.apache.hadoop.hdfs.DFSUtil;
 import org.apache.hadoop.hdfs.HAUtil;
 import org.apache.hadoop.hdfs.MiniDFSCluster;
+import org.apache.hadoop.hdfs.qjournal.MiniJournalCluster;
 import org.apache.hadoop.hdfs.qjournal.MiniQJMHACluster;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos;
+import org.apache.hadoop.hdfs.qjournal.protocol.QJournalProtocolProtos.GetJournaledEditsResponseProto;
+import org.apache.hadoop.hdfs.qjournal.server.JournalNode;
+import org.apache.hadoop.hdfs.qjournal.server.JournalNodeRpcServer;
 import org.apache.hadoop.hdfs.qjournal.server.JournalTestUtil;
 import org.apache.hadoop.hdfs.server.namenode.NNStorage;
 import org.apache.hadoop.hdfs.server.namenode.NameNode;
@@ -44,10 +49,14 @@ import org.apache.hadoop.util.Lists;
 
 import static org.apache.hadoop.hdfs.server.namenode.NameNodeAdapter.getFileInfo;
 import static org.apache.hadoop.hdfs.qjournal.client.QuorumJournalManager.QJM_RPC_MAX_TXNS_KEY;
+import static org.mockito.ArgumentMatchers.eq;
 
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import org.mockito.Mockito;
+import org.mockito.invocation.InvocationOnMock;
+import org.mockito.stubbing.Answer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -63,6 +72,7 @@ public class TestStandbyInProgressTail {
   private Configuration conf;
   private MiniQJMHACluster qjmhaCluster;
   private MiniDFSCluster cluster;
+  private MiniJournalCluster jnCluster;
   private NameNode nn0;
   private NameNode nn1;
 
@@ -77,8 +87,9 @@ public class TestStandbyInProgressTail {
     // Set very samll limit of transactions per a journal rpc call
     conf.setInt(QJM_RPC_MAX_TXNS_KEY, 3);
     HAUtil.setAllowStandbyReads(conf, true);
-    qjmhaCluster = new MiniQJMHACluster.Builder(conf).build();
+    qjmhaCluster = new MiniQJMHACluster.Builder(conf).setMockJN(true).build();
     cluster = qjmhaCluster.getDfsCluster();
+    jnCluster = qjmhaCluster.getJournalCluster();
 
     // Get NameNode from cluster to future manual control
     nn0 = cluster.getNameNode(0);
@@ -326,6 +337,56 @@ public class TestStandbyInProgressTail {
     cluster.transitionToStandby(0);
     cluster.transitionToActive(1);
     cluster.waitActive(1);
+    waitForFileInfo(nn1, p + 0, p + 1, p + 14);
+  }
+
+  /**
+   * Test that Standby Node tails multiple segments while catching up
+   * during the transition to Active.
+   */
+  @Test
+  public void testFailoverWithAbnormalJN() throws Exception {
+    cluster.transitionToActive(0);
+    cluster.waitActive(0);
+
+    cluster.getNameNode(1).getNamesystem().getEditLogTailer().stop();
+
+    JournalNodeRpcServer spyJN0 = jnCluster.getJournalNode(0).getRpcServer();
+    JournalNodeRpcServer spyJN2 = jnCluster.getJournalNode(2).getRpcServer();
+
+    GetJournaledEditsResponseProto responseProto = GetJournaledEditsResponseProto
+        .newBuilder().setTxnCount(0).build();
+    Mockito.doReturn(responseProto).when(spyJN0)
+        .getJournaledEdits(eq("ns1"), eq("ns1"),
+            eq(1L), eq(3));
+
+
+    System.out.println("123456789 ");
+    String p = "/testFailoverWhileTailingWithoutCache/";
+    mkdirs(nn0, p + 0, p + 1, p + 2, p + 3, p + 4);
+    mkdirs(nn0, p + 5, p + 6, p + 7, p + 8, p + 9);
+    mkdirs(nn0, p + 10, p + 11, p + 12, p + 13, p + 14);
+
+    cluster.transitionToStandby(0);
+
+    GetJournaledEditsResponseProto responseFromJN2 = spyJN2.
+        getJournaledEdits("ns1", "ns1", 1, 3);
+    Mockito.doAnswer(invocation -> {
+      System.out.println("0000000 sleep");
+      Thread.sleep(100);
+      return responseFromJN2;
+    }).when(spyJN2).getJournaledEdits(
+        "ns1", "ns1", 1, 3);
+
+    // jid=ns1, nameServieeId=ns1, sinceTxId=1, maxTxns=3
+    LOG.info("11111 {}", jnCluster.getJournalNode(0).getRpcServer().getJournaledEdits("ns1", "ns1", 1, 3));
+    LOG.info("11111 {}", jnCluster.getJournalNode(2).getRpcServer().getJournaledEdits("ns1", "ns1", 1, 3));
+
+    System.out.println("1111111 ");
+    cluster.transitionToActive(1);
+    cluster.waitActive(1);
+
+
     waitForFileInfo(nn1, p + 0, p + 1, p + 14);
   }
 

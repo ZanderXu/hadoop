@@ -69,7 +69,7 @@ public class JournalNodeRpcServer implements QJournalProtocol,
   private Server server;
   private final int handlerCount;
 
-  JournalNodeRpcServer(Configuration conf, JournalNode jn) throws IOException {
+  public JournalNodeRpcServer(Configuration conf, JournalNode jn) throws IOException {
     this.jn = jn;
     
     Configuration confCopy = new Configuration(conf);
@@ -206,6 +206,8 @@ public class JournalNodeRpcServer implements QJournalProtocol,
   public void journal(RequestInfo reqInfo,
       long segmentTxId, long firstTxnId,
       int numTxns, byte[] records) throws IOException {
+    System.out.println("222222 id=" + reqInfo.getJournalId() + ", nsId=" + reqInfo.getNameServiceId()
+        + "segmentTxId=" + segmentTxId + ", firstTxnId=" + firstTxnId + ", numTxns=" + numTxns);
     jn.getOrCreateJournal(reqInfo.getJournalId(), reqInfo.getNameServiceId())
        .journal(reqInfo, segmentTxId, firstTxnId, numTxns, records);
   }
@@ -257,8 +259,13 @@ public class JournalNodeRpcServer implements QJournalProtocol,
   @Override
   public GetJournaledEditsResponseProto getJournaledEdits(String jid,
       String nameServiceId, long sinceTxId, int maxTxns) throws IOException {
-    return jn.getOrCreateJournal(jid, nameServiceId)
+
+    GetJournaledEditsResponseProto responseProto = jn.getOrCreateJournal(jid, nameServiceId)
         .getJournaledEdits(sinceTxId, maxTxns);
+
+    System.out.println("55555 jid=" + jid + ", nameServieeId=" + nameServiceId
+        + ", sinceTxId=" + sinceTxId + ", maxTxns=" + maxTxns + ", respon=" + responseProto.toString());
+    return responseProto;
   }
 
   @Override

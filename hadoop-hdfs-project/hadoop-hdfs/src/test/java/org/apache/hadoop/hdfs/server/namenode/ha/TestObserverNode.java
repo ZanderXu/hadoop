@@ -57,6 +57,7 @@ import org.apache.hadoop.hdfs.protocol.HdfsConstants.SafeModeAction;
 import org.apache.hadoop.hdfs.protocol.LocatedBlock;
 import org.apache.hadoop.hdfs.protocol.LocatedBlocks;
 import org.apache.hadoop.hdfs.qjournal.MiniQJMHACluster;
+import org.apache.hadoop.hdfs.qjournal.server.JournalNode;
 import org.apache.hadoop.hdfs.server.blockmanagement.BlockManager;
 import org.apache.hadoop.hdfs.server.namenode.FSEditLog;
 import org.apache.hadoop.hdfs.server.namenode.FSNamesystem;
@@ -172,6 +173,37 @@ public class TestObserverNode {
 
   @Test
   public void testFailover() throws Exception {
+    Path testPath2 = new Path(testPath, "test2");
+    setObserverRead(false);
+
+    dfs.mkdir(testPath, FsPermission.getDefault());
+    assertSentTo(0);
+    dfs.getFileStatus(testPath);
+    assertSentTo(0);
+
+    dfsCluster.transitionToStandby(0);
+    dfsCluster.transitionToActive(1);
+    dfsCluster.waitActive(1);
+
+    dfs.mkdir(testPath2, FsPermission.getDefault());
+    assertSentTo(1);
+    dfs.getFileStatus(testPath);
+    assertSentTo(1);
+
+    dfsCluster.transitionToStandby(1);
+    dfsCluster.transitionToActive(0);
+    dfsCluster.waitActive(0);
+  }
+
+  @Test
+  public void testFailoverWithAbnormalJN() throws Exception {
+
+    JournalNode jn1 = qjmhaCluster.getJournalCluster().getJournalNode(0);
+    JournalNode jn2 = qjmhaCluster.getJournalCluster().getJournalNode(1);
+    JournalNode jn3 = qjmhaCluster.getJournalCluster().getJournalNode(2);
+
+
+
     Path testPath2 = new Path(testPath, "test2");
     setObserverRead(false);
 
