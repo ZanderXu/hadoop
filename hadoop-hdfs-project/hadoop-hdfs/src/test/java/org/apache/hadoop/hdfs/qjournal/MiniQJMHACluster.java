@@ -53,6 +53,7 @@ public class MiniQJMHACluster {
     private boolean forceRemoteEditsOnly = false;
     private String baseDir;
     private boolean mockJN = false;
+    private MiniJournalCluster miniJournalCluster = null;
 
     public Builder(Configuration conf) {
       this.conf = conf;
@@ -92,6 +93,11 @@ public class MiniQJMHACluster {
       this.mockJN = mockJN;
       return this;
     }
+
+    public Builder setMiniJournalCluster(MiniJournalCluster miniJournalCluster) {
+      this.miniJournalCluster = miniJournalCluster;
+      return this;
+    }
   }
 
   public static MiniDFSNNTopology createDefaultTopology(int nns, int startingPort) {
@@ -117,9 +123,14 @@ public class MiniQJMHACluster {
       try {
         basePort = 10000 + RANDOM.nextInt(1000) * 4;
         LOG.info("Set MiniQJMHACluster basePort to " + basePort);
-        // start 3 journal nodes
-        journalCluster = new MiniJournalCluster.Builder(conf)
-            .baseDir(builder.baseDir).format(true).setMockJN(builder.mockJN).build();
+        if (builder.miniJournalCluster != null) {
+          LOG.info("Using mocked MiniJournalCluster" + basePort);
+          journalCluster = builder.miniJournalCluster;
+        } else {
+          // start 3 journal nodes
+          journalCluster = new MiniJournalCluster.Builder(conf)
+              .baseDir(builder.baseDir).format(true).build();
+        }
         journalCluster.waitActive();
         journalCluster.setNamenodeSharedEditsConf(NAMESERVICE);
         URI journalURI = journalCluster.getQuorumJournalURI(NAMESERVICE);

@@ -150,6 +150,7 @@ public class JournalSet implements JournalManager {
 
     @VisibleForTesting
     void setJournalForTests(JournalManager jm) {
+      LOG.info("8888 set a new Journal for test " + jm + " " + jm.hashCode());
       this.journal = jm;
     }
 
@@ -269,6 +270,11 @@ public class JournalSet implements JournalManager {
         new PriorityQueue<EditLogInputStream>(64,
             EDIT_LOG_INPUT_STREAM_COMPARATOR);
     for (JournalAndStream jas : journals) {
+      LOG.info("444444 jas is {} and hashCode is {} and manage Code is {} and code is {}.",
+          jas, jas.hashCode(), jas.getManager().hashCode(), hashCode());
+    }
+    for (JournalAndStream jas : journals) {
+      LOG.info("Skipping jas " + jas + " since it's disabled" + " " + jas.getManager().hashCode());
       if (jas.isDisabled()) {
         LOG.info("Skipping jas " + jas + " since it's disabled");
         continue;

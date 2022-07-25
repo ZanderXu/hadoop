@@ -127,15 +127,14 @@ public class QuorumJournalManager implements JournalManager {
   }
 
   @VisibleForTesting
-  QuorumJournalManager(Configuration conf,
+  public QuorumJournalManager(Configuration conf,
                        URI uri, NamespaceInfo nsInfo,
                        AsyncLogger.Factory loggerFactory) throws IOException {
     this(conf, uri, nsInfo, null, loggerFactory);
 
   }
 
-  
-  QuorumJournalManager(Configuration conf,
+  public QuorumJournalManager(Configuration conf,
       URI uri, NamespaceInfo nsInfo, String nameServiceId,
       AsyncLogger.Factory loggerFactory) throws IOException {
     Preconditions.checkArgument(conf != null, "must be configured");
@@ -518,6 +517,8 @@ public class QuorumJournalManager implements JournalManager {
     // the cache used for RPC calls is not enabled; fall back to using the
     // streaming mechanism to serve such requests
     if (inProgressOk && inProgressTailingEnabled) {
+      LOG.info("Tailing edits starting from txn ID " + fromTxnId +
+          " via RPC mechanism");
       if (LOG.isDebugEnabled()) {
         LOG.debug("Tailing edits starting from txn ID " + fromTxnId +
             " via RPC mechanism");
@@ -557,12 +558,14 @@ public class QuorumJournalManager implements JournalManager {
         "Quorum call returned without a majority";
 
     List<Integer> responseCounts = new ArrayList<>();
+    LOG.info("33333333333 fromTxnId is {}", fromTxnId);
     for (GetJournaledEditsResponseProto resp : responseMap.values()) {
       responseCounts.add(resp.getTxnCount());
+      LOG.info("333333333 count is {}.", resp.getTxnCount());
     }
     Collections.sort(responseCounts);
     int highestTxnCount = responseCounts.get(responseCounts.size() - 1);
-    if (LOG.isDebugEnabled() || highestTxnCount < 0) {
+    if (LOG.isInfoEnabled() || highestTxnCount < 0) {
       StringBuilder msg = new StringBuilder("Requested edits starting from ");
       msg.append(fromTxnId).append("; got ").append(responseMap.size())
           .append(" responses: <");
@@ -576,7 +579,7 @@ public class QuorumJournalManager implements JournalManager {
         throw new IOException("Did not get any valid JournaledEdits " +
             "responses: " + msg);
       } else {
-        LOG.debug(msg.toString());
+        LOG.info(msg.toString());
       }
     }
     // Cancel any outstanding calls to JN's.
@@ -585,11 +588,14 @@ public class QuorumJournalManager implements JournalManager {
     int maxAllowedTxns = !onlyDurableTxns ? highestTxnCount :
         responseCounts.get(responseCounts.size() - loggers.getMajoritySize());
     if (maxAllowedTxns == 0) {
-      LOG.debug("No new edits available in logs; requested starting from " +
+      LOG.info("No new edits available in logs; requested starting from " +
           "ID {}", fromTxnId);
       return;
     }
     LogAction logAction = selectInputStreamLogHelper.record(fromTxnId);
+    LOG.info("Selected loggers with >= " + maxAllowedTxns + " transactions " +
+        "starting from lowest txn ID " + logAction.getStats(0).getMin() +
+        LogThrottlingHelper.getLogSupressionMessage(logAction));
     if (logAction.shouldLog()) {
       LOG.info("Selected loggers with >= " + maxAllowedTxns + " transactions " +
           "starting from lowest txn ID " + logAction.getStats(0).getMin() +
@@ -600,6 +606,7 @@ public class QuorumJournalManager implements JournalManager {
     for (GetJournaledEditsResponseProto resp : responseMap.values()) {
       long endTxnId = fromTxnId - 1 +
           Math.min(maxAllowedTxns, resp.getTxnCount());
+      LOG.info("1111111 fromTxnId is {}, endTxnId is {}.", fromTxnId, endTxnId);
       allStreams.add(EditLogFileInputStream.fromByteString(
           resp.getEditLog(), fromTxnId, endTxnId, true));
     }
@@ -665,7 +672,7 @@ public class QuorumJournalManager implements JournalManager {
   }
 
   @VisibleForTesting
-  AsyncLoggerSet getLoggerSetForTests() {
+  public AsyncLoggerSet getLoggerSetForTests() {
     return loggers;
   }
 

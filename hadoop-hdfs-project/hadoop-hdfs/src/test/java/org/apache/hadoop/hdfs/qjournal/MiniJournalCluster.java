@@ -48,7 +48,7 @@ import org.apache.hadoop.net.NetUtils;
 import org.apache.hadoop.thirdparty.com.google.common.base.Joiner;
 import org.apache.hadoop.test.GenericTestUtils;
 
-public final class MiniJournalCluster implements Closeable {
+public class MiniJournalCluster implements Closeable {
 
   public static final String CLUSTER_WAITACTIVE_URI = "waitactive";
   public static class Builder {
@@ -58,7 +58,7 @@ public final class MiniJournalCluster implements Closeable {
     private final Configuration conf;
     private int[] httpPorts = null;
     private int[] rpcPorts = null;
-    private boolean mockJN = false;
+    private JournalNode[] journalNodes = null;
 
     static {
       DefaultMetricsSystem.setMiniClusterMode(true);
@@ -78,6 +78,15 @@ public final class MiniJournalCluster implements Closeable {
       return this;
     }
 
+    public Builder journalNodes(JournalNode[] journalNodes) {
+      this.journalNodes = journalNodes;
+      return this;
+    }
+
+    public int getNumJournalNodes() {
+      return this.numJournalNodes;
+    }
+
     public Builder format(boolean f) {
       this.format = f;
       return this;
@@ -93,17 +102,12 @@ public final class MiniJournalCluster implements Closeable {
       return this;
     }
 
-    public Builder setMockJN(boolean mockJN) {
-      this.mockJN = mockJN;
-      return this;
-    }
-
     public MiniJournalCluster build() throws IOException {
       return new MiniJournalCluster(this);
     }
   }
 
-  private static final class JNInfo {
+  private static class JNInfo {
     private JournalNode node;
     private final InetSocketAddress ipcAddr;
     private final String httpServerURI;
@@ -117,10 +121,25 @@ public final class MiniJournalCluster implements Closeable {
 
   private static final Logger LOG =
       LoggerFactory.getLogger(MiniJournalCluster.class);
-  private final File baseDir;
+  private File baseDir;
   private final JNInfo[] nodes;
   
   private MiniJournalCluster(Builder b) throws IOException {
+
+    if (b.journalNodes != null && b.journalNodes.length != b.numJournalNodes) {
+      throw new IllegalArgumentException(
+          "Num of journalNodes (" + b.journalNodes.length + ") should match num of JournalNodes ("
+              + b.numJournalNodes + ")");
+    }
+
+    if (b.journalNodes != null) {
+      nodes = new JNInfo[b.numJournalNodes];
+      for (int i = 0; i < b.numJournalNodes; i++) {
+        nodes[i] = Mockito.spy(new JNInfo(b.journalNodes[i]));
+      }
+      LOG.info("Using mocked server");
+      return;
+    }
 
     if (b.httpPorts != null && b.httpPorts.length != b.numJournalNodes) {
       throw new IllegalArgumentException(
@@ -153,11 +172,8 @@ public final class MiniJournalCluster implements Closeable {
       }
       JournalNode jn = new JournalNode();
       jn.setConf(createConfForNode(b, i));
-      jn.start();
-      if (b.mockJN) {
-        jn.mockRPCServer(
-            Mockito.spy(new JournalNodeRpcServer(jn.getConf(), jn)));
-      }
+      JournalNodeRpcServer mockedJNRpcServer = new JournalNodeRpcServer(jn.getConf(), jn);
+      jn.startWithMockRpcServer(Mockito.spy(mockedJNRpcServer));
       nodes[i] = new JNInfo(jn);
     }
   }
@@ -172,7 +188,7 @@ public final class MiniJournalCluster implements Closeable {
       addrs.add("127.0.0.1:" + info.ipcAddr.getPort());
     }
     String addrsVal = Joiner.on(";").join(addrs);
-    LOG.debug("Setting logger addresses to: " + addrsVal);
+    LOG.info("Setting logger addresses to: " + addrsVal);
     try {
       return new URI("qjournal://" + addrsVal + "/" + jid);
     } catch (URISyntaxException e) {

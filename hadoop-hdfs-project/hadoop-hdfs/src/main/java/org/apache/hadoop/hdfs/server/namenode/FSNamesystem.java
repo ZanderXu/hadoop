@@ -112,6 +112,7 @@ import static org.apache.hadoop.ha.HAServiceProtocol.HAServiceState.OBSERVER;
 
 import org.apache.hadoop.hdfs.protocol.ErasureCodingPolicyInfo;
 
+import org.apache.hadoop.hdfs.server.blockmanagement.BlockManagerFaultInjector;
 import org.apache.hadoop.thirdparty.com.google.common.collect.Maps;
 import org.apache.hadoop.hdfs.server.namenode.snapshot.SnapshotDeletionGc;
 import org.apache.hadoop.thirdparty.protobuf.ByteString;
@@ -1377,7 +1378,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
    * Start services required in active state
    * @throws IOException
    */
-  void startActiveServices() throws IOException {
+  public void startActiveServices() throws IOException {
     startingActiveService = true;
     LOG.info("Starting services required for active state");
     writeLock();
@@ -1389,10 +1390,13 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
         editLog.initJournalsForWrite();
         // May need to recover
         editLog.recoverUnclosedStreams();
+
+        BlockManagerFaultInjector.getInstance().mockJNStreams();
         
         LOG.info("Catching up to latest edits from old active before " +
-            "taking over writer role in edits logs");
+            "taking over writer role in edits logs + hashCode " + editLogTailer.hashCode());
         editLogTailer.catchupDuringFailover();
+        LOG.info("Catching end");
         
         blockManager.setPostponeBlocksFromFuture(false);
         blockManager.getDatanodeManager().markAllDatanodesStale();

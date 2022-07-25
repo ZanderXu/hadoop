@@ -253,13 +253,41 @@ public class JournalNode implements Tool, Configurable, JournalNodeMXBean {
   }
 
   @VisibleForTesting
-  public void mockRPCServer(JournalNodeRpcServer jnServer) {
-    if (rpcServer != null) {
-      rpcServer.stop();
-    }
+  public void startWithMockRpcServer(JournalNodeRpcServer mockedRpcServer) throws IOException {
+    Preconditions.checkState(!isStarted(), "JN already running");
+    LOG.info("11111 mocked rpcServer " + mockedRpcServer.getAddress());
 
-    rpcServer = jnServer;
-    rpcServer.start();
+    try {
+      for (File journalDir : localDir) {
+        validateAndCreateJournalDir(journalDir);
+      }
+      DefaultMetricsSystem.initialize("JournalNode");
+      JvmMetrics.create("JournalNode",
+          conf.get(DFSConfigKeys.DFS_METRICS_SESSION_ID_KEY),
+          DefaultMetricsSystem.instance());
+
+      InetSocketAddress socAddr = JournalNodeRpcServer.getAddress(conf);
+      SecurityUtil.login(conf, DFSConfigKeys.DFS_JOURNALNODE_KEYTAB_FILE_KEY,
+          DFSConfigKeys.DFS_JOURNALNODE_KERBEROS_PRINCIPAL_KEY,
+          socAddr.getHostName());
+
+      registerJNMXBean();
+
+      httpServer = new JournalNodeHttpServer(conf, this,
+          getHttpServerBindAddress(conf));
+      httpServer.start();
+
+      httpServerURI = httpServer.getServerURI().toString();
+
+      rpcServer = mockedRpcServer;
+      rpcServer.start();
+      startTime = now();
+    } catch (IOException ioe) {
+      //Shutdown JournalNode of JournalNodeRpcServer fails to start
+      LOG.error("Failed to start JournalNode.", ioe);
+      this.stop(1);
+      throw ioe;
+    }
   }
 
   public boolean isStarted() {

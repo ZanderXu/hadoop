@@ -299,10 +299,12 @@ public class FSEditLog implements LogsPurgeable {
         if (u.getScheme().equals(NNStorage.LOCAL_URI_SCHEME)) {
           StorageDirectory sd = storage.getStorageDirectory(u);
           if (sd != null) {
+            LOG.info("999999 local " + sd + " hashCode is " + hashCode(), new Throwable());
             journalSet.add(new FileJournalManager(conf, sd, storage),
                 required, sharedEditsDirs.contains(u));
           }
         } else {
+          LOG.info("999999 remote " + u + " hashCode is " + hashCode());
           journalSet.add(createJournal(u), required,
               sharedEditsDirs.contains(u));
         }
@@ -1732,6 +1734,7 @@ public class FSEditLog implements LogsPurgeable {
   public void selectInputStreams(Collection<EditLogInputStream> streams,
       long fromTxId, boolean inProgressOk, boolean onlyDurableTxns)
       throws IOException {
+    LOG.info("3333333333 hashCodeSet is {} and code is {}, journalSet number is {}.", journalSet.hashCode(), hashCode(), journalSet.getAllJournalStreams().size());
     journalSet.selectInputStreams(streams, fromTxId,
             inProgressOk, onlyDurableTxns);
   }
