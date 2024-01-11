@@ -34,6 +34,8 @@ import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_BLOCK_SIZE_DEFAULT;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_BLOCK_SIZE_KEY;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_AUDIT_LOG_WITH_REMOTE_PORT_DEFAULT;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_AUDIT_LOG_WITH_REMOTE_PORT_KEY;
+import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_LOCK_MODEL_PROVIDER_DEFAULT;
+import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_LOCK_MODEL_PROVIDER_KEY;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_STORAGE_POLICY_ENABLED_DEFAULT;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_STORAGE_POLICY_PERMISSIONS_SUPERUSER_ONLY_DEFAULT;
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_STORAGE_POLICY_PERMISSIONS_SUPERUSER_ONLY_KEY;
@@ -96,6 +98,7 @@ import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_SNAPSHOT_DIFF_LI
 import static org.apache.hadoop.hdfs.DFSConfigKeys.DFS_NAMENODE_SNAPSHOT_DIFF_LISTING_LIMIT_DEFAULT;
 import static org.apache.hadoop.hdfs.DFSUtil.isParentEntry;
 
+import java.lang.reflect.Constructor;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -114,6 +117,8 @@ import static org.apache.hadoop.ha.HAServiceProtocol.HAServiceState.OBSERVER;
 import org.apache.hadoop.hdfs.protocol.ErasureCodingPolicyInfo;
 
 import org.apache.hadoop.hdfs.server.blockmanagement.BlockInfoStriped;
+import org.apache.hadoop.hdfs.server.namenode.fgl.AbstractLockModel;
+import org.apache.hadoop.hdfs.server.namenode.fgl.GlobalLockModel;
 import org.apache.hadoop.thirdparty.com.google.common.collect.Maps;
 import org.apache.hadoop.hdfs.server.namenode.snapshot.SnapshotDeletionGc;
 import org.apache.hadoop.thirdparty.protobuf.ByteString;
@@ -622,7 +627,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
   private final int numCommittedAllowed;
 
   /** Lock to protect FSNamesystem. */
-  private final FSNamesystemLock fsLock;
+  private final AbstractLockModel lock;
 
   /** 
    * Checkpoint lock to protect FSNamesystem modification on standby NNs.
@@ -662,7 +667,6 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
   private KeyProviderCryptoExtension provider = null;
 
   private volatile boolean imageLoaded = false;
-  private final Condition cond;
 
   private final FSImage fsImage;
 
@@ -704,7 +708,6 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
     try {
       setImageLoaded(true);
       dir.markNameCacheInitialized();
-      cond.signalAll();
     } finally {
       writeUnlock("setImageLoaded");
     }
@@ -874,8 +877,11 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
     this.contextFieldSeparator =
         conf.get(HADOOP_CALLER_CONTEXT_SEPARATOR_KEY,
             HADOOP_CALLER_CONTEXT_SEPARATOR_DEFAULT);
-    fsLock = new FSNamesystemLock(conf, detailedLockHoldTimeMetrics);
-    cond = fsLock.newWriteLockCondition();
+    Class<? extends AbstractLockModel> lockKlass = conf.getClass(
+        DFS_NAMENODE_LOCK_MODEL_PROVIDER_KEY, DFS_NAMENODE_LOCK_MODEL_PROVIDER_DEFAULT,
+        AbstractLockModel.class);
+    this.lock = createLock(lockKlass, conf, detailedLockHoldTimeMetrics);
+    LOG.info("Using Lock provider: " + lockKlass.getName());
     cpLock = new ReentrantLock();
 
     this.fsImage = fsImage;
@@ -1078,6 +1084,18 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
       LOG.error(getClass().getSimpleName() + " initialization failed.", re);
       close();
       throw re;
+    }
+  }
+
+  private <T> T createLock(Class<T> theClass, Configuration conf,
+      MutableRatesWithAggregation detailedLockHoldTimeMetrics) {
+    try {
+      Constructor<T> meth = theClass.getDeclaredConstructor(
+          Configuration.class, MutableRatesWithAggregation.class);
+      meth.setAccessible(true);
+      return meth.newInstance(conf, detailedLockHoldTimeMetrics);
+    } catch (Exception e) {
+      throw new RuntimeException(e);
     }
   }
 
@@ -1788,73 +1806,125 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
 
   @Override
   public void readLock() {
-    this.fsLock.readLock();
+    this.lock.readLock();
+  }
+
+  public void readFSLock() {
+    this.lock.readFSLock();
+  }
+
+  public void readBMLock() {
+    this.lock.readBMLock();
   }
 
   @Override
   public void readLockInterruptibly() throws InterruptedException {
-    this.fsLock.readLockInterruptibly();
+    this.lock.readLockInterruptibly();
   }
 
   @Override
   public void readUnlock() {
-    this.fsLock.readUnlock();
+    this.lock.readUnlock();
   }
 
   @Override
   public void readUnlock(String opName) {
-    this.fsLock.readUnlock(opName);
+    this.lock.readUnlock(opName);
+  }
+
+  public void readFSUnlock(String opName) {
+    this.lock.readFSUnLock(opName);
+  }
+
+  public void readBMUnlock(String opName) {
+    this.lock.readBMUnLock(opName);
   }
 
   public void readUnlock(String opName,
       Supplier<String> lockReportInfoSupplier) {
-    this.fsLock.readUnlock(opName, lockReportInfoSupplier);
+    this.lock.readUnlock(opName, lockReportInfoSupplier);
   }
 
   @Override
   public void writeLock() {
-    this.fsLock.writeLock();
+    this.lock.writeLock();
+  }
+
+  public void writeFSLock() {
+    this.lock.writeFSLock();
+  }
+
+  public void writeBMLock() {
+    this.lock.writeBMLock();
   }
 
   @Override
   public void writeLockInterruptibly() throws InterruptedException {
-    this.fsLock.writeLockInterruptibly();
+    this.lock.writeLockInterruptibly();
   }
 
   @Override
   public void writeUnlock() {
-    this.fsLock.writeUnlock();
+    this.lock.writeUnlock();
   }
 
   @Override
   public void writeUnlock(String opName) {
-    this.fsLock.writeUnlock(opName);
+    this.lock.writeUnlock(opName);
+  }
+
+  public void writeFSUnlock(String opName) {
+    this.lock.writeFSUnlock(opName);
+  }
+
+  public void writeBMUnlock(String opName) {
+    this.lock.writeBMUnLock(opName);
   }
 
   public void writeUnlock(String opName, boolean suppressWriteLockReport) {
-    this.fsLock.writeUnlock(opName, suppressWriteLockReport);
+    this.lock.writeUnlock(opName, suppressWriteLockReport);
   }
 
   public void writeUnlock(String opName,
       Supplier<String> lockReportInfoSupplier) {
-    this.fsLock.writeUnlock(opName, lockReportInfoSupplier);
+    this.lock.writeUnlock(opName, lockReportInfoSupplier);
+  }
+
+  public void writeFSUnlock(String opName, Supplier<String> lockReportInfoSupplier) {
+    this.lock.writeFSUnlock(opName, lockReportInfoSupplier);
   }
 
   @Override
   public boolean hasWriteLock() {
-    return this.fsLock.isWriteLockedByCurrentThread();
+    return this.lock.hasWriteLock();
   }
   @Override
   public boolean hasReadLock() {
-    return this.fsLock.getReadHoldCount() > 0 || hasWriteLock();
+    return this.lock.hasReadLock();
+  }
+
+  public boolean hasFSReadLock() {
+    return this.lock.hasFSReadLock();
+  }
+
+  public boolean hasFSWriteLock() {
+    return this.lock.hasFSWriteLock();
+  }
+
+  public boolean hasBMReadLock() {
+    return this.lock.hasBMReadLock();
+  }
+
+  public boolean hasBMWriteLock() {
+    return this.lock.hasBMWriteLock();
   }
 
   public int getReadHoldCount() {
-    return this.fsLock.getReadHoldCount();
+    return this.lock.getReadHoldCount();
   }
 
   public int getWriteHoldCount() {
-    return this.fsLock.getWriteHoldCount();
+    return this.lock.getWriteHoldCount();
   }
 
   /** Lock the checkpoint lock */
@@ -4935,21 +5005,21 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
   @Metric({"LockQueueLength", "Number of threads waiting to " +
       "acquire FSNameSystemLock"})
   public int getFsLockQueueLength() {
-    return fsLock.getQueueLength();
+    return this.lock.getQueueLength();
   }
 
   @Metric(value = {"ReadLockLongHoldCount", "The number of time " +
           "the read lock has been held for longer than the threshold"},
           type = Metric.Type.COUNTER)
   public long getNumOfReadLockLongHold() {
-    return fsLock.getNumOfReadLockLongHold();
+    return this.lock.getNumOfReadLockLongHold();
   }
 
   @Metric(value = {"WriteLockLongHoldCount", "The number of time " +
           "the write lock has been held for longer than the threshold"},
           type = Metric.Type.COUNTER)
   public long getNumOfWriteLockLongHold() {
-    return fsLock.getNumOfWriteLockLongHold();
+    return this.lock.getNumOfWriteLockLongHold();
   }
 
   int getNumberOfDatanodes(DatanodeReportType type) {
@@ -7098,12 +7168,12 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
   
   @VisibleForTesting
   void setFsLockForTests(ReentrantReadWriteLock lock) {
-    this.fsLock.coarseLock = lock;
+    this.lock.setLockForTests(lock);
   }
   
   @VisibleForTesting
   public ReentrantReadWriteLock getFsLockForTests() {
-    return fsLock.coarseLock;
+    return this.lock.getLockForTests();
   }
   
   @VisibleForTesting
@@ -9129,29 +9199,29 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
   }
 
   public void setMetricsEnabled(boolean metricsEnabled) {
-    this.fsLock.setMetricsEnabled(metricsEnabled);
+    this.lock.setMetricsEnabled(metricsEnabled);
   }
 
   @VisibleForTesting
   public boolean isMetricsEnabled() {
-    return this.fsLock.isMetricsEnabled();
+    return this.lock.isMetricsEnabled();
   }
 
   public void setReadLockReportingThresholdMs(long readLockReportingThresholdMs) {
-    this.fsLock.setReadLockReportingThresholdMs(readLockReportingThresholdMs);
+    this.lock.setReadLockReportingThresholdMs(readLockReportingThresholdMs);
   }
 
   @VisibleForTesting
   public long getReadLockReportingThresholdMs() {
-    return this.fsLock.getReadLockReportingThresholdMs();
+    return this.lock.getReadLockReportingThresholdMs();
   }
 
   public void setWriteLockReportingThresholdMs(long writeLockReportingThresholdMs) {
-    this.fsLock.setWriteLockReportingThresholdMs(writeLockReportingThresholdMs);
+    this.lock.setWriteLockReportingThresholdMs(writeLockReportingThresholdMs);
   }
 
   @VisibleForTesting
   public long getWriteLockReportingThresholdMs() {
-    return this.fsLock.getWriteLockReportingThresholdMs();
+    return this.lock.getWriteLockReportingThresholdMs();
   }
 }
