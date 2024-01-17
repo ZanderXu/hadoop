@@ -71,7 +71,8 @@ final class FSDirErasureCodingOp {
    */
   static ErasureCodingPolicy getEnabledErasureCodingPolicyByName(
       final FSNamesystem fsn, final String ecPolicyName) throws IOException {
-    assert fsn.hasReadLock();
+    // Can use FSLock to make EC related operations thread safe.
+    assert fsn.hasFSReadLock();
     ErasureCodingPolicy ecPolicy = fsn.getErasureCodingPolicyManager()
         .getEnabledPolicyByName(ecPolicyName);
     if (ecPolicy == null) {
@@ -416,7 +417,7 @@ final class FSDirErasureCodingOp {
    */
   static ErasureCodingPolicy unprotectedGetErasureCodingPolicy(
       final FSNamesystem fsn, final INodesInPath iip) throws IOException {
-    assert fsn.hasReadLock();
+    assert fsn.hasFSReadLock();
 
     return getErasureCodingPolicyForPath(fsn.getFSDirectory(), iip);
   }

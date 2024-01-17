@@ -261,37 +261,27 @@ public class FSDirectory implements Closeable {
    * remain as placeholders only
    */
   void readLock() {
-    assert namesystem.hasReadLock() : "Should hold namesystem read lock";
+    assert namesystem.hasFSReadLock() : "Should hold namesystem read lock";
   }
 
   void readUnlock() {
-    assert namesystem.hasReadLock() : "Should hold namesystem read lock";
+    assert namesystem.hasFSReadLock() : "Should hold namesystem read lock";
   }
 
   void writeLock() {
-    assert namesystem.hasWriteLock() : "Should hold namesystem write lock";
+    assert namesystem.hasFSWriteLock() : "Should hold namesystem write lock";
   }
 
   void writeUnlock() {
-    assert namesystem.hasWriteLock() : "Should hold namesystem write lock";
+    assert namesystem.hasFSWriteLock() : "Should hold namesystem write lock";
   }
 
   boolean hasWriteLock() {
-    return namesystem.hasWriteLock();
+    return namesystem.hasFSWriteLock();
   }
 
   boolean hasReadLock() {
-    return namesystem.hasReadLock();
-  }
-
-  @Deprecated // dirLock is obsolete, use namesystem.fsLock instead
-  public int getReadHoldCount() {
-    return namesystem.getReadHoldCount();
-  }
-
-  @Deprecated // dirLock is obsolete, use namesystem.fsLock instead
-  public int getWriteHoldCount() {
-    return namesystem.getWriteHoldCount();
+    return namesystem.hasFSReadLock();
   }
 
   public int getListLimit() {

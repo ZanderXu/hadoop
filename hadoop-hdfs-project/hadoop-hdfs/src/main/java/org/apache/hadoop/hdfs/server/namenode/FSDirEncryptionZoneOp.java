@@ -656,13 +656,13 @@ final class FSDirEncryptionZoneOp {
     Preconditions.checkNotNull(ezKeyName);
 
     // Generate EDEK while not holding the fsn lock.
-    fsn.writeUnlock("getEncryptionKeyInfo");
+    fsn.writeFSUnlock("getEncryptionKeyInfo");
     try {
       EncryptionFaultInjector.getInstance().startFileBeforeGenerateKey();
       return new EncryptionKeyInfo(protocolVersion, suite, ezKeyName,
           generateEncryptedDataEncryptionKey(fsd, ezKeyName));
     } finally {
-      fsn.writeLock();
+      fsn.writeFSLock();
       EncryptionFaultInjector.getInstance().startFileAfterGenerateKey();
     }
   }

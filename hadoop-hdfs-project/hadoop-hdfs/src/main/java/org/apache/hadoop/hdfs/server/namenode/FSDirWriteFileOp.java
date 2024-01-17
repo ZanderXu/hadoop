@@ -363,7 +363,7 @@ class FSDirWriteFileOp {
       boolean shouldReplicate, String ecPolicyName, String storagePolicy,
       boolean logRetryEntry)
       throws IOException {
-    assert fsn.hasWriteLock();
+    assert fsn.hasFSWriteLock();
     boolean overwrite = flag.contains(CreateFlag.OVERWRITE);
     boolean isLazyPersist = flag.contains(CreateFlag.LAZY_PERSIST);
 
@@ -371,22 +371,27 @@ class FSDirWriteFileOp {
     FSDirectory fsd = fsn.getFSDirectory();
 
     if (iip.getLastINode() != null) {
-      if (overwrite) {
-        List<INode> toRemoveINodes = new ChunkedArrayList<>();
-        List<Long> toRemoveUCFiles = new ChunkedArrayList<>();
-        long ret = FSDirDeleteOp.delete(fsd, iip, toRemoveBlocks,
-                                        toRemoveINodes, toRemoveUCFiles, now());
-        if (ret >= 0) {
-          iip = INodesInPath.replace(iip, iip.length() - 1, null);
-          FSDirDeleteOp.incrDeletedFileCount(ret);
-          fsn.removeLeasesAndINodes(toRemoveUCFiles, toRemoveINodes, true);
+      fsn.writeBMLock();
+      try {
+        if (overwrite) {
+          List<INode> toRemoveINodes = new ChunkedArrayList<>();
+          List<Long> toRemoveUCFiles = new ChunkedArrayList<>();
+          long ret = FSDirDeleteOp.delete(fsd, iip, toRemoveBlocks,
+              toRemoveINodes, toRemoveUCFiles, now());
+          if (ret >= 0) {
+            iip = INodesInPath.replace(iip, iip.length() - 1, null);
+            FSDirDeleteOp.incrDeletedFileCount(ret);
+            fsn.removeLeasesAndINodes(toRemoveUCFiles, toRemoveINodes, true);
+          }
+        } else {
+          // If lease soft limit time is expired, recover the lease
+          fsn.recoverLeaseInternal(FSNamesystem.RecoverLeaseOp.CREATE_FILE, iip,
+              src, holder, clientMachine, false);
+          throw new FileAlreadyExistsException(src + " for client " +
+              clientMachine + " already exists");
         }
-      } else {
-        // If lease soft limit time is expired, recover the lease
-        fsn.recoverLeaseInternal(FSNamesystem.RecoverLeaseOp.CREATE_FILE, iip,
-                                 src, holder, clientMachine, false);
-        throw new FileAlreadyExistsException(src + " for client " +
-            clientMachine + " already exists");
+      } finally {
+        fsn.writeBMUnlock("create");
       }
     }
     fsn.checkFsObjectLimit();

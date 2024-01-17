@@ -785,6 +785,25 @@ public class NameNodeRpcServer implements NamenodeProtocols {
   }
   
   @Override // ClientProtocol
+  /**
+   * Phase I:
+   * 1. FSReadLock
+   * 2. BMReadLock
+   * 3. BMReadUnLock
+   * 4. FSReadUnlock
+   * Phase II:
+   * 1. FSReadLock
+   * 2. BMReadLock
+   * 3. IIPLock
+   * 4. IIPUnlock
+   * 5. BMReadUnlock
+   * 6. FSReadUnlock
+   * Phase III:
+   * 1. FSReadLock
+   * 2. IIPLock
+   * 3. IIPUnlock
+   * 4. FSReadUnlock
+   */
   public LocatedBlocks getBlockLocations(String src, 
                                           long offset, 
                                           long length) 
@@ -803,6 +822,30 @@ public class NameNodeRpcServer implements NamenodeProtocols {
   }
 
   @Override // ClientProtocol
+  /**
+   * Phase I: Splitting global lock into FSLock(FileSystem Lock) and BMLock(Block&Datanode Lock)
+   * 1. FSWriteLock
+   * 2. BMWriteLock(If the last block exists)
+   * 2.1 BMWriteUnLock(If the last block exists)
+   * 3. Create file
+   * 4. FSWriteUnLock
+   * Phase II: Splitting the FSLock (Recursively determine whether BMLock is needed)
+   * 1. FSReadLock
+   * 2. BMWriteLock (If the last block exists)
+   * 2.1 IIPLock
+   * 2.2 IIPUnlock
+   * 2.3 BMWriteUnlock
+   * 3. IIPLock (Should re-check if the last block exists )
+   * 3.1 Create file
+   * 3.2 IIPUnlock
+   * 4. FSReadUnlock
+   * Phase III: Splitting the BMLock
+   * 1. FSReadLock
+   * 2. IIPLock
+   * 3. Remove last block and Create file
+   * 4. IIPUnlock
+   * 5. FSReadUnlock
+   */
   public HdfsFileStatus create(String src, FsPermission masked,
       String clientName, EnumSetWritable<CreateFlag> flag,
       boolean createParent, short replication, long blockSize,
@@ -1188,6 +1231,25 @@ public class NameNodeRpcServer implements NamenodeProtocols {
     namesystem.renewLease(clientName);        
   }
 
+  /**
+   * Phase I: FSLock && BMLock
+   * 1. FSReadLock
+   * 2. BMReadLock(If needLocation is true)
+   * 2.1 BMReadUnlock
+   * 3. FSReadUnlock
+   * Phase II: Fine-grained FSLock and Global BMLock
+   * 1. FSReadLock
+   * 2. BMReadLock (If needLocation is true)
+   * 3. IIPLock
+   * 4. IIPUnlock
+   * 5. BMReadUnlock (If needLocation is true)
+   * 6. FSReadUnlock
+   * Phase III: Fine-grained FSLock and Fine-grained BMLock
+   * 1. FSReadLock
+   * 2. IIPLock
+   * 3. IIPUnlock
+   * 4. FSReadUnlock
+   */
   @Override // ClientProtocol
   public DirectoryListing getListing(String src, byte[] startAfter,
       boolean needLocation) throws IOException {
@@ -1223,6 +1285,25 @@ public class NameNodeRpcServer implements NamenodeProtocols {
   }
 
   @Override // ClientProtocol
+  /**
+   * Phase I:
+   * 1. FSReadLock
+   * 2. BMReadLock (If needLocation is true)
+   * 2.1 BMReadUnlock
+   * 3. FSReadUnlock
+   * Phase II:
+   * 1. FSReadLock
+   * 2. BMReadLock (If needLocation is true)
+   * 3. IIPLock
+   * 4. IIPUnlock
+   * 5. BMReadUnlock
+   * 6. FSReadUnlock
+   * Phase III:
+   * 1. FSReadLock
+   * 2. IIPLock
+   * 3. IIPUnlock
+   * 4. FSReadUnlock
+   */
   public HdfsFileStatus getFileInfo(String src) throws IOException {
     checkNNStartup();
     metrics.incrFileInfoOps();

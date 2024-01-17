@@ -143,8 +143,12 @@ public class AbstractLockModel {
     this.fsLock.readLock();
   }
 
-  public void readFSUnLock(String opName) {
+  public void readFSUnlock(String opName) {
     this.fsLock.readUnlock(opName);
+  }
+
+  public void readFSUnlock(String opName, Supplier<String> lockReportInfoSupplier) {
+    this.fsLock.readUnlock(opName, lockReportInfoSupplier);
   }
 
   public void writeFSLock() {
@@ -167,7 +171,7 @@ public class AbstractLockModel {
     this.bmLock.readLock();
   }
 
-  public void readBMUnLock(String opName) {
+  public void readBMUnlock(String opName) {
     this.bmLock.readUnlock(opName);
   }
 
@@ -175,7 +179,7 @@ public class AbstractLockModel {
     this.bmLock.writeLock();
   }
 
-  public void writeBMUnLock(String opName) {
+  public void writeBMUnlock(String opName) {
     this.bmLock.writeUnlock(opName);
   }
 
@@ -184,7 +188,7 @@ public class AbstractLockModel {
     this.bmLock.writeLock();
   }
 
-  public void readFSUnLockAndWriteBMUnLock(String opName) {
+  public void readFSUnLockAndWriteBMUnlock(String opName) {
     this.bmLock.writeUnlock(opName);
     this.fsLock.readUnlock(opName);
   }
@@ -194,7 +198,7 @@ public class AbstractLockModel {
     this.bmLock.readLock();
   }
 
-  public void writeFSUnLockAndReadBMUnLock(String opName) {
+  public void writeFSUnLockAndReadBMUnlock(String opName) {
     this.bmLock.readUnlock(opName);
     this.fsLock.writeUnlock(opName);
   }

@@ -151,6 +151,7 @@ class FSDirStatAndListingOp {
         "Negative length is not supported. File: " + src);
     BlockManager bm = fsd.getBlockManager();
     fsd.readLock();
+    fsd.getFSNamesystem().readBMLock();
     try {
       // Just get INodesInPath without access checks, since we check for path
       // access later
@@ -162,6 +163,7 @@ class FSDirStatAndListingOp {
         fsd.checkPathAccess(pc, iip, FsAction.READ);
       }
 
+      // needs BMReadLock
       final long fileSize = iip.isSnapshot()
           ? inode.computeFileSize(iip.getPathSnapshotId())
           : inode.computeFileSizeNotIncludingLastUcBlock();
@@ -189,6 +191,7 @@ class FSDirStatAndListingOp {
           && now > inode.getAccessTime() + fsd.getAccessTimePrecision();
       return new GetBlockLocationsResult(updateAccessTime, blocks, iip);
     } finally {
+      fsd.getFSNamesystem().readBMUnlock("open");
       fsd.readUnlock();
     }
   }
@@ -251,37 +254,45 @@ class FSDirStatAndListingOp {
       int locationBudget = fsd.getLsLimit();
       int listingCnt = 0;
       HdfsFileStatus listing[] = new HdfsFileStatus[numOfListing];
-      for (int i = 0; i < numOfListing && locationBudget > 0; i++) {
-        INode child = contents.get(startChild+i);
-        byte childStoragePolicy =
-            !child.isSymlink()
-                ? getStoragePolicyID(child.getLocalStoragePolicyID(),
+      if (needLocation) {
+        fsd.getFSNamesystem().readBMLock();
+        try {
+          for (int i = 0; i < numOfListing && locationBudget > 0; i++) {
+            INode child = contents.get(startChild+i);
+            byte childStoragePolicy =
+                !child.isSymlink()
+                    ? getStoragePolicyID(child.getLocalStoragePolicyID(),
                     parentStoragePolicy)
-            : parentStoragePolicy;
-        listing[i] = createFileStatus(fsd, iip, child, childStoragePolicy,
-            needLocation, false);
-        listingCnt++;
-        if (listing[i] instanceof HdfsLocatedFileStatus) {
-          // Once we hit lsLimit locations, stop.
-          // This helps to prevent excessively large response payloads.
-          LocatedBlocks blks =
-              ((HdfsLocatedFileStatus) listing[i]).getLocatedBlocks();
-          if (blks != null) {
-            ErasureCodingPolicy ecPolicy = listing[i].getErasureCodingPolicy();
-            if (ecPolicy != null && !ecPolicy.isReplicationPolicy()) {
-              // Approximate #locations with locatedBlockCount() *
-              // internalBlocksNum.
-              locationBudget -= blks.locatedBlockCount() *
-                  (ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits());
-            } else {
-              // Approximate #locations with locatedBlockCount() *
-              // replicationFactor.
-              locationBudget -=
-                  blks.locatedBlockCount() * listing[i].getReplication();
+                    : parentStoragePolicy;
+            listing[i] = createFileStatus(fsd, iip, child, childStoragePolicy,
+                needLocation, false);
+            listingCnt++;
+            if (listing[i] instanceof HdfsLocatedFileStatus) {
+              // Once we hit lsLimit locations, stop.
+              // This helps to prevent excessively large response payloads.
+              LocatedBlocks blks =
+                  ((HdfsLocatedFileStatus) listing[i]).getLocatedBlocks();
+              if (blks != null) {
+                ErasureCodingPolicy ecPolicy = listing[i].getErasureCodingPolicy();
+                if (ecPolicy != null && !ecPolicy.isReplicationPolicy()) {
+                  // Approximate #locations with locatedBlockCount() *
+                  // internalBlocksNum.
+                  locationBudget -= blks.locatedBlockCount() *
+                      (ecPolicy.getNumDataUnits() + ecPolicy.getNumParityUnits());
+                } else {
+                  // Approximate #locations with locatedBlockCount() *
+                  // replicationFactor.
+                  locationBudget -=
+                      blks.locatedBlockCount() * listing[i].getReplication();
+                }
+              }
             }
           }
+        } finally {
+          fsd.getFSNamesystem().readBMUnlock("getListing");
         }
       }
+
       // truncate return array if necessary
       if (listingCnt < numOfListing) {
           listing = Arrays.copyOf(listing, listingCnt);
@@ -445,15 +456,20 @@ class FSDirStatAndListingOp {
         feInfo = FSDirEncryptionZoneOp.getFileEncryptionInfo(fsd, iip);
       }
       if (needLocation) {
-        final boolean inSnapshot = snapshot != Snapshot.CURRENT_STATE_ID;
-        final boolean isUc = !inSnapshot && fileNode.isUnderConstruction();
-        final long fileSize = !inSnapshot && isUc
-            ? fileNode.computeFileSizeNotIncludingLastUcBlock() : size;
-        loc = fsd.getBlockManager().createLocatedBlocks(
-            fileNode.getBlocks(snapshot), fileSize, isUc, 0L, size,
-            needBlockToken, inSnapshot, feInfo, ecPolicy);
-        if (loc == null) {
-          loc = new LocatedBlocks();
+        fsd.getFSNamesystem().readBMLock();
+        try {
+          final boolean inSnapshot = snapshot != Snapshot.CURRENT_STATE_ID;
+          final boolean isUc = !inSnapshot && fileNode.isUnderConstruction();
+          final long fileSize = !inSnapshot && isUc
+              ? fileNode.computeFileSizeNotIncludingLastUcBlock() : size;
+          loc = fsd.getBlockManager().createLocatedBlocks(
+              fileNode.getBlocks(snapshot), fileSize, isUc, 0L, size,
+              needBlockToken, inSnapshot, feInfo, ecPolicy);
+          if (loc == null) {
+            loc = new LocatedBlocks();
+          }
+        } finally {
+          fsd.getFSNamesystem().readBMUnlock("getFileInfo");
         }
       }
     } else if (node.isDirectory()) {

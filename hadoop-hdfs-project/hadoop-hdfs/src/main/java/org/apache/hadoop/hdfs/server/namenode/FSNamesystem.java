@@ -1833,11 +1833,15 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
   }
 
   public void readFSUnlock(String opName) {
-    this.lock.readFSUnLock(opName);
+    this.lock.readFSUnlock(opName);
+  }
+
+  public void readFSUnlock(String opName, Supplier<String> lockReportInfoSupplier) {
+    this.lock.readFSUnlock(opName, lockReportInfoSupplier);
   }
 
   public void readBMUnlock(String opName) {
-    this.lock.readBMUnLock(opName);
+    this.lock.readBMUnlock(opName);
   }
 
   public void readUnlock(String opName,
@@ -1878,7 +1882,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
   }
 
   public void writeBMUnlock(String opName) {
-    this.lock.writeBMUnLock(opName);
+    this.lock.writeBMUnlock(opName);
   }
 
   public void writeUnlock(String opName, boolean suppressWriteLockReport) {
@@ -2262,7 +2266,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
     FSPermissionChecker.setOperationType(operationName);
     final INode inode;
     try {
-      readLock();
+      readFSLock();
       try {
         checkOperation(OperationCategory.READ);
         res = FSDirStatAndListingOp.getBlockLocations(
@@ -2287,7 +2291,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
           checkBlockLocationsWhenObserver(res.blocks, srcArg);
         }
       } finally {
-        readUnlock(operationName, getLockReportInfoSupplier(srcArg));
+        readFSUnlock(operationName, getLockReportInfoSupplier(srcArg));
       }
     } catch (AccessControlException e) {
       logAuditEvent(false, operationName, srcArg);
@@ -2300,7 +2304,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
       String src = srcArg;
       checkOperation(OperationCategory.WRITE);
       try {
-        writeLock();
+        writeFSLock();
         final long now = now();
         try {
           checkOperation(OperationCategory.WRITE);
@@ -2317,7 +2321,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
             }
           }
         } finally {
-          writeUnlock(operationName, getLockReportInfoSupplier(srcArg));
+          writeFSUnlock(operationName, getLockReportInfoSupplier(srcArg));
         }
       } catch (Throwable e) {
         LOG.warn("Failed to update the access time of " + src, e);
@@ -2835,7 +2839,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
     checkOperation(OperationCategory.WRITE);
     final FSPermissionChecker pc = getPermissionChecker();
     FSPermissionChecker.setOperationType(null);
-    writeLock();
+    writeFSLock();
     try {
       checkOperation(OperationCategory.WRITE);
       checkNameNodeSafeMode("Cannot create file" + src);
@@ -2897,7 +2901,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
         dir.writeUnlock();
       }
     } finally {
-      writeUnlock("create", getLockReportInfoSupplier(src, null, stat));
+      writeFSUnlock("create", getLockReportInfoSupplier(src, null, stat));
       // There might be transactions logged while trying to recover the lease.
       // They need to be sync'ed even when an exception was thrown.
       if (!skipSync) {
@@ -3127,6 +3131,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
     checkOperation(OperationCategory.WRITE);
     final FSPermissionChecker pc = getPermissionChecker();
     FSPermissionChecker.setOperationType(operationName);
+    // needs both FSReadLock and BMReadLock
     readLock();
     try {
       checkOperation(OperationCategory.WRITE);
@@ -3146,6 +3151,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
         blockManager, src, excludedNodes, favoredNodes, flags, r);
 
     checkOperation(OperationCategory.WRITE);
+    // needs both FSWriteLock and BMWriteLock
     writeLock();
     LocatedBlock lb;
     try {
@@ -3536,13 +3542,13 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
     final FSPermissionChecker pc = getPermissionChecker();
     FSPermissionChecker.setOperationType(operationName);
     try {
-      readLock();
+      readFSLock();
       try {
         checkOperation(OperationCategory.READ);
         stat = FSDirStatAndListingOp.getFileInfo(
             dir, pc, src, resolveLink, needLocation, needBlockToken);
       } finally {
-        readUnlock(operationName, getLockReportInfoSupplier(src));
+        readFSUnlock(operationName, getLockReportInfoSupplier(src));
       }
     } catch (AccessControlException e) {
       logAuditEvent(false, operationName, src);
@@ -4264,12 +4270,12 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
     final FSPermissionChecker pc = getPermissionChecker();
     FSPermissionChecker.setOperationType(operationName);
     try {
-      readLock();
+      readFSLock();
       try {
         checkOperation(NameNode.OperationCategory.READ);
         dl = getListingInt(dir, pc, src, startAfter, needLocation);
       } finally {
-        readUnlock(operationName, getLockReportInfoSupplier(src));
+        readFSUnlock(operationName, getLockReportInfoSupplier(src));
       }
     } catch (AccessControlException e) {
       logAuditEvent(false, operationName, src);
