@@ -1638,9 +1638,8 @@ public class FSDirectory implements Closeable {
    */
   public static byte[][] getPathComponents(INode inode) {
     List<byte[]> components = new ArrayList<byte[]>();
-    components.add(0, inode.getLocalNameBytes());
-    while(inode.getParent() != null) {
-      components.add(0, inode.getParent().getLocalNameBytes());
+    while (inode != null) {
+      components.add(0, inode.getLocalNameBytes());
       inode = inode.getParent();
     }
     return components.toArray(new byte[components.size()][]);
@@ -1771,10 +1770,10 @@ public class FSDirectory implements Closeable {
         // inode is root, or its parent is root.
         return new byte[][]{INodeDirectory.ROOT_NAME};
       }
-      return parent.getPathComponents();
+      return FSDirectory.getPathComponents(parent);
     }
     return constructRemainingPath(
-        inode.getPathComponents(), pathComponents, 4);
+        FSDirectory.getPathComponents(inode), pathComponents, 4);
   }
 
   private static byte[][] constructRemainingPath(byte[][] components,

@@ -603,22 +603,9 @@ public abstract class INode implements INodeAttributes, Diff.Element<byte[]> {
     if (isRoot()) {
       return Path.SEPARATOR;
     }
-    // compute size of needed bytes for the path
-    int idx = 0;
-    for (INode inode = this; inode != null; inode = inode.getParent()) {
-      // add component + delimiter (if not tail component)
-      idx += inode.getLocalNameBytes().length + (inode != this ? 1 : 0);
-    }
-    byte[] path = new byte[idx];
-    for (INode inode = this; inode != null; inode = inode.getParent()) {
-      if (inode != this) {
-        path[--idx] = Path.SEPARATOR_CHAR;
-      }
-      byte[] name = inode.getLocalNameBytes();
-      idx -= name.length;
-      System.arraycopy(name, 0, path, idx, name.length);
-    }
-    return DFSUtil.bytes2String(path);
+
+    byte[][] components = FSDirectory.getPathComponents(this);
+    return DFSUtil.byteArray2PathString(components);
   }
 
   public boolean isDeleted() {
@@ -633,6 +620,10 @@ public abstract class INode implements INodeAttributes, Diff.Element<byte[]> {
     }
   }
 
+  /**
+   * Please use {@link FSDirectory#getPathComponents(INode)}
+   */
+  @Deprecated
   public byte[][] getPathComponents() {
     int n = 0;
     for (INode inode = this; inode != null; inode = inode.getParent()) {

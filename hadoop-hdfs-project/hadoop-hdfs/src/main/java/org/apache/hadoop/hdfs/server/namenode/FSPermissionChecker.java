@@ -423,7 +423,7 @@ public class FSPermissionChecker implements AccessControlEnforcer {
    */
   void checkPermission(INode inode, int snapshotId, FsAction access)
       throws AccessControlException {
-    byte[][] pathComponents = inode.getPathComponents();
+    byte[][] pathComponents = FSDirectory.getPathComponents(inode);
     INodeAttributes nodeAttributes = getINodeAttrs(pathComponents,
         pathComponents.length - 1, inode, snapshotId);
     try {
