@@ -17,8 +17,10 @@
  */
 package org.apache.hadoop.hdfs.server.namenode;
 
+import java.io.Closeable;
 import java.util.Arrays;
 
+import org.apache.hadoop.hdfs.server.namenode.fgl.AutoCloseNNLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.hdfs.DFSUtil;
@@ -35,7 +37,7 @@ import static org.apache.hadoop.hdfs.server.namenode.snapshot.Snapshot.ID_INTEGE
 /**
  * Contains INodes information resolved from a given path.
  */
-public class INodesInPath {
+public class INodesInPath implements Closeable {
   public static final Logger LOG = LoggerFactory.getLogger(INodesInPath.class);
 
   /**
@@ -276,6 +278,11 @@ public class INodesInPath {
   private volatile String pathname;
 
   /**
+   * Array with the specified number of AutoCloseNNLocks acquired for a given path.
+   */
+  private final AutoCloseNNLock<INode>[] inodeLocks;
+
+  /**
    * Array with the specified number of INodes resolved for a given path.
    */
   private final INode[] inodes;
@@ -300,8 +307,14 @@ public class INodesInPath {
 
   private INodesInPath(INode[] inodes, byte[][] path, boolean isRaw,
       boolean isSnapshot,int snapshotId) {
+    this(inodes, null, path, isRaw, isSnapshot, snapshotId);
+  }
+
+  private INodesInPath(INode[] inodes, AutoCloseNNLock<INode>[] inodeLocks,
+      byte[][] path, boolean isRaw, boolean isSnapshot,int snapshotId) {
     Preconditions.checkArgument(inodes != null && path != null);
     this.inodes = inodes;
+    this.inodeLocks = inodeLocks;
     this.path = path;
     this.isRaw = isRaw;
     this.isSnapshot = isSnapshot;
@@ -309,7 +322,7 @@ public class INodesInPath {
   }
 
   private INodesInPath(INode[] inodes, byte[][] path) {
-    this(inodes, path, false, false, CURRENT_STATE_ID);
+    this(inodes, null, path, false, false, CURRENT_STATE_ID);
   }
 
   /**
@@ -523,6 +536,21 @@ public class INodesInPath {
     if (i != inodes.length) {
       throw new AssertionError("i = " + i + " != " + inodes.length
           + ", this=" + toString(false));
+    }
+  }
+
+  @Override
+  public void close() {
+    if (inodeLocks != null) {
+      // In order to avoid deadlock, locks are released from end to start
+      // because they were acquired from start to end.
+      AutoCloseNNLock<INode> lock = null;
+      for (int index = inodeLocks.length - 1; index >= 0; index--) {
+        lock = inodeLocks[index];
+        if (lock != null) {
+          lock.close();
+        }
+      }
     }
   }
 }
