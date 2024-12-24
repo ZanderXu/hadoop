@@ -25,6 +25,18 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.hdfs.HdfsConfiguration;
+import org.apache.hadoop.hdfs.MiniDFSCluster;
+import org.apache.hadoop.hdfs.protocol.Block;
+import org.apache.hadoop.hdfs.server.datanode.InternalDataNodeTestUtils;
+import org.apache.hadoop.hdfs.server.protocol.DatanodeProtocol;
+import org.apache.hadoop.hdfs.server.protocol.DatanodeRegistration;
+import org.apache.hadoop.hdfs.server.protocol.DatanodeStorage;
+import org.apache.hadoop.hdfs.server.protocol.NamenodeProtocols;
+import org.apache.hadoop.hdfs.server.protocol.ReceivedDeletedBlockInfo;
+import org.apache.hadoop.hdfs.server.protocol.SlowDiskReports;
+import org.apache.hadoop.hdfs.server.protocol.SlowPeerReports;
+import org.apache.hadoop.hdfs.server.protocol.StorageReceivedDeletedBlocks;
+import org.apache.hadoop.hdfs.server.protocol.StorageReport;
 import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
 
@@ -51,9 +63,163 @@ import java.util.concurrent.ThreadLocalRandom;
 public class FSNLockBenchmarkThroughput extends Configured implements Tool {
 
   private final FileSystem fileSystem;
+  private volatile MiniDFSCluster cluster = null;
+  private final ExecutorService executors;
 
   public FSNLockBenchmarkThroughput(FileSystem fileSystem) {
     this.fileSystem = fileSystem;
+    this.executors = Executors.newFixedThreadPool(100);
+  }
+
+  public void setCluster(MiniDFSCluster cluster) {
+    this.cluster = cluster;
+  }
+
+  private void submitTasks(List<Callable<Void>> tasks, String method) throws Exception {
+    //System.out.println("Starting the Benchmark for " + method);
+    long startTime = System.currentTimeMillis();
+    List<Future<Void>> futures = this.executors.invokeAll(tasks);
+
+    // Waiting result
+    for (Future<Void> f : futures) {
+      f.get();
+    }
+
+    long endTime = System.currentTimeMillis();
+    System.out.println("The Benchmark result of " + method + " is: " + tasks.size()
+        + " tasks completed, taking " + (endTime - startTime) + "(ms)");
+  }
+
+  public void benchmarkForCreate(Path basePath, int testingCount, int numClients)
+      throws Exception {
+    HashMap<String, Integer> detailInfo = new HashMap<>();
+    List<Callable<Void>> tasks = new ArrayList<>();
+    for (int i = 0; i < testingCount; i++) {
+      int finalI = i;
+      tasks.add(() -> {
+        internalWriteFile(this.fileSystem, new Path(basePath, "file" + finalI), false, detailInfo);
+        return null;
+      });
+    }
+    submitTasks(tasks, "create");
+
+    detailInfo.forEach(
+        (k, v) -> System.out.println("\t operationName:" + k + ", testCount:" + v));
+  }
+
+  public void benchmarkForGetFileInfo(ArrayList<Path> readingPaths, int testingCount, int numClients) throws Exception {
+    HashMap<String, Integer> detailInfo = new HashMap<>();
+    List<Callable<Void>> tasks = new ArrayList<>();
+    if (this.cluster != null) {
+      for (int i = 0; i < numClients; i++) {
+        tasks.add(() -> {
+          for (int j = 0; j < testingCount; j++) {
+            int pathIndex = ThreadLocalRandom.current().nextInt(readingPaths.size());
+            String pathStr = readingPaths.get(pathIndex).toUri().getPath();
+            cluster.getNameNode(0).getRpcServer().getFileInfo(pathStr);
+            incOp(detailInfo, "getFileInfo");
+          }
+          return null;
+        });
+      }
+      submitTasks(tasks, "GetFileInfo");
+    }
+
+    detailInfo.forEach(
+        (k, v) -> System.out.println("\t operationName:" + k + ", testCount:" + v));
+  }
+
+  public ArrayList<Path> createReadingFiles(Path basePath) throws IOException {
+    // private final
+    ArrayList<Path> readingPaths = new ArrayList<>();
+    for (int i = 0; i < 30; i++) {
+      Path path = new Path(basePath, "reading_" + i);
+      internalWriteFile(this.fileSystem, path, true, null);
+      readingPaths.add(path);
+    }
+    return readingPaths;
+  }
+
+  public void deleteReadingFiles(ArrayList<Path> readingPaths) throws IOException {
+    for (Path path : readingPaths) {
+      this.fileSystem.delete(path, false);
+    }
+  }
+
+  public void benchmarkForGetBlockLocation(ArrayList<Path> readingPaths, int testingCount, int numClients) throws Exception {
+    HashMap<String, Integer> detailInfo = new HashMap<>();
+    List<Callable<Void>> tasks = new ArrayList<>();
+
+    if (this.cluster != null) {
+      for (int i = 0; i < numClients; i++) {
+        tasks.add(() -> {
+          for (int j = 0; j < testingCount; j++) {
+            int pathIndex = ThreadLocalRandom.current().nextInt(readingPaths.size());
+            String pathStr = readingPaths.get(pathIndex).toUri().getPath();
+            cluster.getNameNode(0).getRpcServer().getBlockLocations(pathStr, 0, Long.MAX_VALUE);
+            incOp(detailInfo, "getBlockLocations");
+          }
+          return null;
+        });
+      }
+      submitTasks(tasks, "GetBlockLocation");
+    }
+
+    detailInfo.forEach(
+        (k, v) -> System.out.println("\t operationName:" + k + ", testCount:" + v));
+  }
+
+  public void benchmarkForHeartbeat(int testingCount, int numDNs) throws Exception {
+    List<Callable<Void>> tasks = new ArrayList<>();
+    for (int j = 0; j < numDNs; j++) {
+      if (cluster != null) {
+        DatanodeProtocol dnp = cluster.getNameNodeRpc(0);
+        String poolId = cluster.getNamesystem(0).getBlockPoolId();
+        DatanodeRegistration reg = InternalDataNodeTestUtils.
+            getDNRegistrationForBP(cluster.getDataNodes().get(0), poolId);
+
+        StorageReport[] rep = { new StorageReport(
+            new DatanodeStorage(reg.getDatanodeUuid()),
+            false, 0, 0, 0, 0, 0) };
+
+        tasks.add(() -> {
+          for (int i = 0; i < testingCount; i++) {
+            dnp.sendHeartbeat(reg, rep, 0L, 0L, 0,
+                0, 0, null, true,
+                SlowPeerReports.EMPTY_REPORT, SlowDiskReports.EMPTY_REPORT).getCommands();
+          }
+          return null;
+        });
+      }
+    }
+    submitTasks(tasks, "Heartbeat");
+  }
+
+  public void benchmarkForIBR(int testingCount, int numDNs) throws Exception {
+    List<Callable<Void>> tasks = new ArrayList<>();
+    for (int j = 0; j < numDNs; j++) {
+      if (cluster != null) {
+        String poolId = cluster.getNamesystem(0).getBlockPoolId();
+        DatanodeRegistration reg = InternalDataNodeTestUtils.
+            getDNRegistrationForBP(cluster.getDataNodes().get(0), poolId);
+        ReceivedDeletedBlockInfo[] blocks = { new ReceivedDeletedBlockInfo(
+            new Block(0),
+            ReceivedDeletedBlockInfo.BlockStatus.RECEIVED_BLOCK,
+            null) };
+        StorageReceivedDeletedBlocks storageBlock =
+            new StorageReceivedDeletedBlocks(
+                new DatanodeStorage(reg.getDatanodeUuid()), blocks) ;
+
+        tasks.add(() -> {
+          for (int i = 0; i < testingCount; i++) {
+            cluster.getNamesystem(0).processIncrementalBlockReport(reg, storageBlock);
+          }
+          return null;
+        });
+      }
+    }
+
+    submitTasks(tasks, "IBR");
   }
 
   public void benchmark(Path basePath, int readWriteRatio, int testingCount,
@@ -105,7 +271,7 @@ public class FSNLockBenchmarkThroughput extends Configured implements Tool {
   // Write a little data to the path.
   private void internalWriteFile(FileSystem fs, Path path, boolean writeData,
       HashMap<String, Integer> detailInfo) throws IOException {
-    try (FSDataOutputStream outputStream = fs.create(path)) {
+    try (FSDataOutputStream outputStream = fs.create(path, (short) 1)) {
       incOp(detailInfo, "create");
       incOp(detailInfo, "complete");
       byte[] data = new byte[1024];
@@ -162,6 +328,15 @@ public class FSNLockBenchmarkThroughput extends Configured implements Tool {
     };
   }
 
+  private Callable<Void> getBlockLocation(NamenodeProtocols namenodeProtocols, String pathStr,
+                                     HashMap<String, Integer> detailInfo) {
+    return () -> {
+      namenodeProtocols.getBlockLocations(pathStr, 0, Long.MAX_VALUE);
+      incOp(detailInfo, "getBlockLocations");
+      return null;
+    };
+  }
+
   /**
    * Include getFileInfo.
    */
@@ -169,6 +344,15 @@ public class FSNLockBenchmarkThroughput extends Configured implements Tool {
       HashMap<String, Integer> detailInfo) {
     return () -> {
       fs.getFileStatus(path);
+      incOp(detailInfo, "getFileInfo");
+      return null;
+    };
+  }
+
+  private Callable<Void> getFileInfo(NamenodeProtocols namenodeProtocols, String pathStr,
+                                     HashMap<String, Integer> detailInfo) {
+    return () -> {
+      namenodeProtocols.getFileInfo(pathStr);
       incOp(detailInfo, "getFileInfo");
       return null;
     };
