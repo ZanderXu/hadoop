@@ -17,13 +17,18 @@
  */
 package org.apache.hadoop.hdfs.server.namenode.fgl;
 
+import org.apache.hadoop.hdfs.server.namenode.INode;
 import org.apache.hadoop.hdfs.util.RwLockMode;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.util.concurrent.HadoopExecutors;
 import org.junit.Test;
+import org.openjdk.jol.info.ClassLayout;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import sun.misc.Unsafe;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
@@ -31,7 +36,11 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.AbstractQueuedSynchronizer;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class TestFineGrainedFSNamesystemLock {
 
@@ -39,6 +48,71 @@ public class TestFineGrainedFSNamesystemLock {
 
   private int getLoopNumber() {
     return ThreadLocalRandom.current().nextInt(2000, 3000);
+  }
+
+  private static final Unsafe unsafe;
+  static {
+    try {
+      Field field = Unsafe.class.getDeclaredField("theUnsafe");
+      field.setAccessible(true);
+      unsafe = (Unsafe) field.get(null);
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    }
+  }
+
+  public static long getObjectSize(Class<?> clazz) {
+    long maxOffset = 0;
+    for (Field field : clazz.getDeclaredFields()) {
+      if (Modifier.isStatic(field.getModifiers())) {
+        continue;
+      }
+      long offset = unsafe.objectFieldOffset(field);
+      if (offset > maxOffset) {
+        maxOffset = offset;
+      }
+    }
+    return ((maxOffset / 8) + 1) * 8;
+  }
+
+  public static long getObjectSizeIncludingReferences(Object obj) {
+    if (obj == null) return 0;
+
+    long size = ClassLayout.parseInstance(obj).instanceSize();
+
+    if (obj instanceof LockResource) {
+      LockResource<INode> lockResource = (LockResource<INode>) obj;
+      size += getObjectSizeIncludingReferences(lockResource.rwLock);  // 引用字段
+      size += getObjectSizeIncludingReferences(lockResource.ref);  // 引用字段
+    } else if (obj instanceof ReentrantReadWriteLock) {
+      ReentrantReadWriteLock lock = (ReentrantReadWriteLock) obj;
+      size += getObjectSizeIncludingReferences(lock.readLock());
+      size += getObjectSizeIncludingReferences(lock.writeLock());
+    }
+
+    return size;
+  }
+
+  @Test
+  public void testFineGrainedLock() {
+
+    System.out.println("LockResource size: " + getObjectSize(LockResource.class));
+    System.out.println("LockResource1 size: " + ClassLayout.parseInstance(new LockResource<INode>()).toPrintable());
+    System.out.println("ReentrantReadWriteLock1 size: " + ClassLayout.parseInstance(new ReentrantReadWriteLock()).toPrintable());
+    //System.out.println("FairSync size: " + ClassLayout.parseInstance(new ReentrantReadWriteLock.FairSync()).toPrintable());
+    System.out.println("AbstractQueuedSynchronizer size: " + getObjectSize(AbstractQueuedSynchronizer.class));
+    System.out.println("AbstractQueuedSynchronizer size: " + getObjectSize(AbstractQueuedSynchronizer.class));
+    System.out.println("Thread size: " + getObjectSize(Thread.class));
+    //System.out.println("HoldCounter size: " + getObjectSize(ReentrantReadWriteLock.Sync.HoldCounter.class));
+    //System.out.println("ThreadLocalHoldCounter size: " + getObjectSize(ReentrantReadWriteLock.Sync.ThreadLocalHoldCounter.class));
+    System.out.println("AtomicInteger size: " + ClassLayout.parseInstance(new AtomicInteger()).toPrintable());
+
+    System.out.println("LockResource2 size: " + getObjectSizeIncludingReferences(new LockResource<INode>()));
+    System.out.println("ReadWriteLock size: " + getObjectSize(ReadWriteLock.class));
+    System.out.println("ReentrantReadWriteLock size: " + getObjectSize(ReentrantReadWriteLock.class));
+
+    System.out.println("Integer size: " + getObjectSize(Integer.class));
+    System.out.println("Long size: " + getObjectSize(Long.class));
   }
 
   /**
