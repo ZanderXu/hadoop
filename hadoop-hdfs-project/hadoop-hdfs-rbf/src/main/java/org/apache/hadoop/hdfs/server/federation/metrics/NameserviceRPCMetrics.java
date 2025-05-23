@@ -56,8 +56,10 @@ public class NameserviceRPCMetrics implements NameserviceRPCMBean {
   private MutableCounterLong proxyOpPermitRejected;
   @Metric("Number of operations accepted to hit a namenode")
   private MutableCounterLong proxyOpPermitAccepted;
-  @Metric("Async Queue Size")
+  @Metric("Async Handler Queue Size")
   private MutableGaugeInt asyncHandlerQueueSize;
+  @Metric("Async Responder Queue Size")
+  private MutableGaugeInt asyncResponderQueueSize;
 
   public NameserviceRPCMetrics(Configuration conf, String nsId) {
     this.nsId = NAMESERVICE_RPC_METRICS_PREFIX + nsId;
@@ -121,6 +123,10 @@ public class NameserviceRPCMetrics implements NameserviceRPCMBean {
 
   public void setAsyncHandlerQueueSize(int size) {
     asyncHandlerQueueSize.set(size);
+  }
+
+  public void setAsyncResponderQueueSize(int size) {
+    asyncResponderQueueSize.set(size);
   }
 
   /**

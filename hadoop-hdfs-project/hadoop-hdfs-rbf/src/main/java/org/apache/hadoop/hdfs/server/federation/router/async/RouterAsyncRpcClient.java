@@ -19,6 +19,7 @@ package org.apache.hadoop.hdfs.server.federation.router.async;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdfs.NameNodeProxiesClient;
+import org.apache.hadoop.hdfs.protocolPB.AsyncRpcProtocolPBUtil;
 import org.apache.hadoop.hdfs.server.federation.fairness.RouterRpcFairnessPolicyController;
 import org.apache.hadoop.hdfs.server.federation.resolver.ActiveNamenodeResolver;
 import org.apache.hadoop.hdfs.server.federation.resolver.FederationNamenodeContext;
@@ -175,8 +176,9 @@ public class RouterAsyncRpcClient extends RouterRpcClient{
           + router.getRouterId());
     }
     String nsId = namenodes.get(0).getNameserviceId();
-    ThreadPoolExecutor executor = router.getRpcServer().getAsyncExecutorForNamespace(nsId);
-    int queueSize = executor.getQueue().size();
+    ThreadPoolExecutor handlerExecutor = router.getRpcServer().getAsyncExecutorForNamespace(nsId);
+    int queueSize = handlerExecutor.getQueue().size();
+    ThreadPoolExecutor responderExecutor = router.getRpcServer().getAsyncExecutorForNamespace(nsId);
     // transfer threadLocalContext to worker threads of executor.
     ThreadLocalContext threadLocalContext = new ThreadLocalContext();
     asyncComplete(null);
@@ -186,6 +188,8 @@ public class RouterAsyncRpcClient extends RouterRpcClient{
             namenodes, params);
       }
       threadLocalContext.transfer();
+      //No need to clean it up since the executor is always used by the current namespace
+      AsyncRpcProtocolPBUtil.setAsyncNSResponderExecutor(responderExecutor);
       RouterRpcFairnessPolicyController controller = getRouterRpcFairnessPolicyController();
       acquirePermit(nsId, ugi, method.getName(), controller);
       invokeMethodAsync(ugi, (List<FederationNamenodeContext>) namenodes,
@@ -194,7 +198,7 @@ public class RouterAsyncRpcClient extends RouterRpcClient{
         releasePermit(nsId, ugi, method, controller);
         return object;
       });
-    }, executor));
+    }, handlerExecutor));
 
     // Convert RejectedExecutionException to StandbyException since
     asyncCatch((ret, e) -> {

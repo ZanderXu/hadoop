@@ -53,11 +53,21 @@ import static org.apache.hadoop.ipc.internal.ShadedProtobufHelper.ipc;
  * @see CompletableFuture
  */
 public final class AsyncRpcProtocolPBUtil {
-  public static final Logger LOG = LoggerFactory.getLogger(AsyncRpcProtocolPBUtil.class);
+  private static final Logger LOG = LoggerFactory.getLogger(AsyncRpcProtocolPBUtil.class);
+  private static final ThreadLocal<Executor> asyncNSResponderExecutor = new ThreadLocal<>();
+
   /** The executor used for handling responses asynchronously. */
   private static Executor asyncResponderExecutor;
 
   private AsyncRpcProtocolPBUtil() {}
+
+  public static Executor getAsyncNSResponderExecutor() {
+    return asyncNSResponderExecutor.get();
+  }
+
+  public static void setAsyncNSResponderExecutor(Executor nsExecutor) {
+    asyncNSResponderExecutor.set(nsExecutor);
+  }
 
   /**
    * Asynchronously invokes an RPC call and applies a response transformation function
@@ -86,8 +96,11 @@ public final class AsyncRpcProtocolPBUtil {
     CompletableFuture<Writable> responseFuture = Client.getResponseFuture();
     // transfer thread local context to worker threads of executor.
     ThreadLocalContext threadLocalContext = new ThreadLocalContext();
+    Executor responseExecutor = getAsyncResponderExecutor();
     asyncCompleteWith(responseFuture.handleAsync((result, e) -> {
       threadLocalContext.transfer();
+      // No need to clean it up since the executor is always used by the current namespace
+      AsyncRpcProtocolPBUtil.setAsyncNSResponderExecutor(responseExecutor);
       if (e != null) {
         throw warpCompletionException(e);
       }
@@ -97,8 +110,17 @@ public final class AsyncRpcProtocolPBUtil {
       } catch (Exception ex) {
         throw warpCompletionException(ex);
       }
-    }, asyncResponderExecutor));
+    }, responseExecutor));
     return asyncReturn(clazz);
+  }
+
+  private static Executor getAsyncResponderExecutor() {
+    Executor responseExecutor = getAsyncNSResponderExecutor();
+    if (responseExecutor == null) {
+      LOG.warn("No dedicated response executor found for the namespace.");
+      responseExecutor = asyncResponderExecutor;
+    }
+    return responseExecutor;
   }
 
   /**

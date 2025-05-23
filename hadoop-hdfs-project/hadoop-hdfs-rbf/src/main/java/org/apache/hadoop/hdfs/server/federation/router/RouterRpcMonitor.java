@@ -145,5 +145,13 @@ public interface RouterRpcMonitor {
    * @param nsId the namespace identifier
    * @param queueSize the current size of the async queue
    */
-  void recordAsyncQueueSize(String nsId, int queueSize);
+  void recordAsyncHandlerQueueSize(String nsId, int queueSize);
+
+  /**
+   * Records the size of the async responder queue for the given namespace.
+   *
+   * @param nsId the namespace identifier
+   * @param queueSize the current size of the async queue
+   */
+  void recordAsyncResponderQueueSize(String nsId, int queueSize);
 }

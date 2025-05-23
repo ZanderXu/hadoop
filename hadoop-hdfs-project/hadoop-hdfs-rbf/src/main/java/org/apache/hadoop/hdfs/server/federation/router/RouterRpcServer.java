@@ -25,6 +25,8 @@ import static org.apache.hadoop.hdfs.server.federation.router.RBFConfigKeys.DFS_
 import static org.apache.hadoop.hdfs.server.federation.router.RBFConfigKeys.DFS_ROUTER_ASYNC_RPC_HANDLER_COUNT_KEY;
 import static org.apache.hadoop.hdfs.server.federation.router.RBFConfigKeys.DFS_ROUTER_ASYNC_RPC_NS_HANDLER_COUNT_DEFAULT;
 import static org.apache.hadoop.hdfs.server.federation.router.RBFConfigKeys.DFS_ROUTER_ASYNC_RPC_NS_HANDLER_COUNT_KEY;
+import static org.apache.hadoop.hdfs.server.federation.router.RBFConfigKeys.DFS_ROUTER_ASYNC_RPC_NS_RESPONDER_COUNT_DEFAULT;
+import static org.apache.hadoop.hdfs.server.federation.router.RBFConfigKeys.DFS_ROUTER_ASYNC_RPC_NS_RESPONDER_COUNT_KEY;
 import static org.apache.hadoop.hdfs.server.federation.router.RBFConfigKeys.DFS_ROUTER_ASYNC_RPC_QUEUE_SIZE;
 import static org.apache.hadoop.hdfs.server.federation.router.RBFConfigKeys.DFS_ROUTER_ASYNC_RPC_QUEUE_SIZE_DEFAULT;
 import static org.apache.hadoop.hdfs.server.federation.router.RBFConfigKeys.DFS_ROUTER_ASYNC_RPC_RESPONDER_COUNT_KEY;
@@ -298,7 +300,8 @@ public class RouterRpcServer extends AbstractService implements ClientProtocol,
   private final boolean enableAsync;
   private final Map<String, ThreadPoolExecutor> asyncRouterHandlerExecutors = new ConcurrentHashMap<>();
   private ThreadPoolExecutor routerDefaultAsyncHandlerExecutor;
-  private ExecutorService routerAsyncResponderExecutor;
+  private final Map<String, ThreadPoolExecutor> asyncResponderExecutors = new ConcurrentHashMap<>();
+  private ThreadPoolExecutor defaultAsyncResponderExecutor;
 
   /**
    * Construct a router RPC server.
@@ -505,10 +508,17 @@ public class RouterRpcServer extends AbstractService implements ClientProtocol,
    * @param configuration the configuration.
    */
   public void initAsyncThreadPools(Configuration configuration) {
-    LOG.info("Begin initialize asynchronous handler and responder thread pool.");
-    Map<String, Integer> nsAsyncHandlerCount = parseNsAsyncHandlerCount(configuration);
     Set<String> allConfiguredNS = FederationUtil.getAllConfiguredNS(configuration);
     allConfiguredNS.add(CONCURRENT_NS);
+
+    initAsyncHandlerThreadPools(configuration, allConfiguredNS);
+    initAsyncResponderThreadPools(configuration, allConfiguredNS);
+  }
+
+  private void initAsyncHandlerThreadPools(Configuration configuration, Set<String> allConfiguredNS) {
+    LOG.info("Begin initialize asynchronous handler thread pool.");
+    Map<String, Integer> nsAsyncHandlerCount = parseNsAsyncHandlerCount(configuration,
+        DFS_ROUTER_ASYNC_RPC_NS_HANDLER_COUNT_KEY, DFS_ROUTER_ASYNC_RPC_NS_HANDLER_COUNT_DEFAULT);
 
     int asyncQueueSize = configuration.getInt(DFS_ROUTER_ASYNC_RPC_QUEUE_SIZE,
         DFS_ROUTER_ASYNC_RPC_QUEUE_SIZE_DEFAULT);
@@ -539,15 +549,40 @@ public class RouterRpcServer extends AbstractService implements ClientProtocol,
       routerDefaultAsyncHandlerExecutor = initAsyncHandlerThreadPools4Ns(
           "default", asyncQueueSize, asyncHandlerCountDefault);
     }
+  }
 
+  private void initAsyncResponderThreadPools(Configuration configuration, Set<String> allConfiguredNS) {
+    LOG.info("Begin initialize asynchronous responder thread pool.");
+    Map<String, Integer> nsAsyncResponderCount = parseNsAsyncHandlerCount(configuration,
+        DFS_ROUTER_ASYNC_RPC_NS_RESPONDER_COUNT_KEY, DFS_ROUTER_ASYNC_RPC_NS_RESPONDER_COUNT_DEFAULT);
     int asyncResponderCount = configuration.getInt(DFS_ROUTER_ASYNC_RPC_RESPONDER_COUNT_KEY,
         DFS_ROUTER_ASYNCRPC_RESPONDER_COUNT_DEFAULT);
-    if (routerAsyncResponderExecutor == null) {
-      LOG.info("Initialize router async responder count: {}", asyncResponderCount);
-      routerAsyncResponderExecutor = Executors.newFixedThreadPool(
-          asyncResponderCount, new AsyncThreadFactory("Router Async Responder #"));
+    for (String nsId : allConfiguredNS) {
+      int dedicatedResponder = nsAsyncResponderCount.getOrDefault(nsId, 0);
+      if (dedicatedResponder <= 0) {
+        dedicatedResponder = asyncResponderCount;
+        LOG.info("Use default async responder count {} for ns {}.", dedicatedResponder, nsId);
+      } else {
+        LOG.info("Dedicated responder {} for ns {} ", dedicatedResponder, nsId);
+      }
+
+      if (dedicatedResponder > 0) {
+        int finalDedicatedResponder = dedicatedResponder;
+        asyncResponderExecutors.computeIfAbsent(nsId,
+            id -> new ThreadPoolExecutor(finalDedicatedResponder, finalDedicatedResponder,
+                0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
+                new AsyncThreadFactory("Router Async Handler for " + nsId + " #")));
+        LOG.info("Assigned {} async responders to nsId {} ", finalDedicatedResponder, nsId);
+      }
     }
-    AsyncRpcProtocolPBUtil.setAsyncResponderExecutor(routerAsyncResponderExecutor);
+
+    if (defaultAsyncResponderExecutor == null) {
+      LOG.info("Initialize router async responder count: {}", asyncResponderCount);
+      defaultAsyncResponderExecutor = new ThreadPoolExecutor(asyncResponderCount, asyncResponderCount,
+          0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
+          new AsyncThreadFactory("Router Async Responder #"));
+    }
+    AsyncRpcProtocolPBUtil.setAsyncResponderExecutor(defaultAsyncResponderExecutor);
   }
 
   private ThreadPoolExecutor initAsyncHandlerThreadPools4Ns(String ns, int asyncQueueSize, int handlerCount) {
@@ -568,27 +603,39 @@ public class RouterRpcServer extends AbstractService implements ClientProtocol,
     ThreadPoolExecutor executorService = asyncRouterHandlerExecutors.getOrDefault(
         nsId, routerDefaultAsyncHandlerExecutor);
     if (rpcMonitor != null) {
-      rpcMonitor.recordAsyncQueueSize(nsId, executorService.getQueue().size());
+      rpcMonitor.recordAsyncHandlerQueueSize(nsId, executorService.getQueue().size());
     }
     return executorService;
   }
 
-  private Map<String, Integer> parseNsAsyncHandlerCount(Configuration conf) {
-    String configNsHandler = conf.get(DFS_ROUTER_ASYNC_RPC_NS_HANDLER_COUNT_KEY,
-        DFS_ROUTER_ASYNC_RPC_NS_HANDLER_COUNT_DEFAULT);
+  /**
+   * Returns the asynchronous executor for the specified namespace.
+   * If no executor is configured for the given namespace ID, returns the default executor.
+   *
+   * @param nsId the namespace identifier
+   * @return the corresponding ExecutorService
+   */
+  public ThreadPoolExecutor getAsyncResponderForNamespace(String nsId) {
+    ThreadPoolExecutor executorService = asyncResponderExecutors.getOrDefault(
+        nsId, defaultAsyncResponderExecutor);
+    if (rpcMonitor != null) {
+      rpcMonitor.recordAsyncResponderQueueSize(nsId, executorService.getQueue().size());
+    }
+    return executorService;
+  }
+
+  private Map<String, Integer> parseNsAsyncHandlerCount(Configuration conf, String key, String defaultValue) {
+    String configNsHandler = conf.get(key, defaultValue);
     Map<String, Integer> nsAsyncHandlerCount = new ConcurrentHashMap<>();
     if (StringUtils.isEmpty(configNsHandler)) {
-      LOG.error(
-          "The value of config key: {} is empty. Will use default conf.",
-          DFS_ROUTER_ASYNC_RPC_NS_HANDLER_COUNT_KEY);
+      LOG.error("The value of config key: {} is empty. Will use default conf.", key);
     }
     String[] nsHandlers = configNsHandler.split(",");
     for (String nsHandlerInfo : nsHandlers) {
       String[] nsHandlerItems = nsHandlerInfo.split(":");
       if (nsHandlerItems.length != 2 || StringUtils.isBlank(nsHandlerItems[0]) ||
           !StringUtils.isNumeric(nsHandlerItems[1])) {
-        LOG.error("The config key: {} is incorrect! The value is {}.",
-            DFS_ROUTER_ASYNC_RPC_NS_HANDLER_COUNT_KEY, nsHandlerInfo);
+        LOG.error("The config key: {} is incorrect! The value is {}.", key, nsHandlerInfo);
         continue;
       }
       nsAsyncHandlerCount.put(nsHandlerItems[0], Integer.parseInt(nsHandlerItems[1]));
