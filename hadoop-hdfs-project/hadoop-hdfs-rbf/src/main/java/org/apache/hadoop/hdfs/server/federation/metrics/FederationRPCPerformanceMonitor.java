@@ -279,6 +279,22 @@ public class FederationRPCPerformanceMonitor implements RouterRpcMonitor {
   }
 
   @Override
+  public void recordAsyncHandlerQueueSize(String nsId, int queueSize) {
+    if (nameserviceRPCMetricsMap != null &&
+        nameserviceRPCMetricsMap.containsKey(nsId)) {
+      nameserviceRPCMetricsMap.get(nsId).setAsyncHandlerQueueSize(queueSize);
+    }
+  }
+
+  @Override
+  public void recordAsyncResponderQueueSize(String nsId, int queueSize) {
+    if (nameserviceRPCMetricsMap != null &&
+        nameserviceRPCMetricsMap.containsKey(nsId)) {
+      nameserviceRPCMetricsMap.get(nsId).setAsyncResponderQueueSize(queueSize);
+    }
+  }
+
+  @Override
   public void routerFailureLocked() {
     if (metrics != null) {
       metrics.incrRouterFailureLocked();

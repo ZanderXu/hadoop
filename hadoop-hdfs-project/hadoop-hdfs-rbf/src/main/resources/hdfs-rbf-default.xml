@@ -67,11 +67,29 @@
   </property>
 
   <property>
+    <name>dfs.federation.router.async.rpc.queue.size</name>
+    <value>1000</value>
+    <description>
+      The queue size of asynchronous executor per nameservice.
+    </description>
+  </property>
+
+  <property>
     <name>dfs.federation.router.async.rpc.responder.count</name>
     <value>10</value>
     <description>
       For those nameservices not in dfs.federation.router.async.rpc.ns.handler.count configuration entry,
       use this value as the asynchronous handler thread counts.
+    </description>
+  </property>
+
+  <property>
+    <name>dfs.federation.router.async.rpc.ns.responder.count</name>
+    <value></value>
+    <description>
+      The number of asynchronous responder per nameservice, separated by commas, internally separated by colons.
+      The identifier of nameservice is in dfs.nameservices configuration entry.
+      Such as: ns1:count1,ns2:count2,ns3:count3.
     </description>
   </property>
 
